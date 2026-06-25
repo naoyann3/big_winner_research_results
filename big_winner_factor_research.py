@@ -24,6 +24,8 @@ class ResearchConfig:
     theme_top_industry_count: int = 12
     fetch_timeout_sec: int = 20
     max_tickers: int | None = None
+    # --- 新規追加パラメータ ---
+    min_daily_turnover_million: float = 10.0  # 過去20日平均の1日あたり最低売買代金（百万円）
 
 
 def normalize_ticker(raw: str) -> str:
@@ -220,7 +222,15 @@ def calc_features(df: pd.DataFrame, config: ResearchConfig) -> pd.DataFrame:
 
     d["vol_avg20"] = d["Volume"].rolling(20).mean()
     d["volume_ratio_20"] = d["Volume"] / d["vol_avg20"]
+    
+    # 1日の売買代金（百万円）の算出
     d["turnover_million"] = (d["Close"] * d["Volume"]) / 1_000_000
+    # 過去20日間の平均1日あたり売買代金の算出
+    d["turnover_avg20_million"] = d["turnover_million"].rolling(20).mean()
+    
+    # 【再現性向上】流動性フィルター（物理的な足切り）の判定
+    d["liquidity_ok"] = d["turnover_avg20_million"] >= config.min_daily_turnover_million
+
     d["return_63d_pct"] = (d["Close"] - d["Close"].shift(63)) / d["Close"].shift(63) * 100
     d["return_126d_pct"] = (d["Close"] - d["Close"].shift(126)) / d["Close"].shift(126) * 100
 
@@ -237,13 +247,52 @@ def calc_features(df: pd.DataFrame, config: ResearchConfig) -> pd.DataFrame:
     )
 
     d["perfect_order"] = (d["Close"] > d["ma25"]) & (d["ma25"] > d["ma75"]) & (d["ma75"] > d["ma200"])
-    d["trend_building"] = (d["ma25"] > d["ma75"]) & (d["ma75"] > d["ma200"]) & (d["ma75_slope_pct"] > 0)
-    d["breakout_52w"] = d["Close"] >= d["recent_high_52w"] * 0.98
+    
+    # 全ての既存シグナルに対しても、売買代金による流動性OK（liquidity_ok）を条件に噛み合わせる
+    d["trend_building"] = (d["ma25"] > d["ma75"]) & (d["ma75"] > d["ma200"]) & (d["ma75_slope_pct"] > 0) & d["liquidity_ok"]
+    d["breakout_52w"] = (d["Close"] >= d["recent_high_52w"] * 0.98) & d["liquidity_ok"]
     d["breakout_confirmed"] = d["breakout_52w"] & (d["volume_ratio_20"] >= 1.5)
-    d["congestion_tight"] = d["ma_congestion_width_pct"] <= 8.0
+    d["congestion_tight"] = (d["ma_congestion_width_pct"] <= 8.0) & d["liquidity_ok"]
+
+    # 1. 「MAの密集（スクイーズ）」の数値化
+    d["ma_squeeze_20d"] = d["ma_congestion_width_pct"].rolling(20).max() <= 5.0
+
+    # 2. 「売り枯れ（ドライアップ）」の検知
+    vol_avg20_prior = d["Volume"].shift(1).rolling(20).mean()
+    vol_avg5_prior = d["Volume"].shift(1).rolling(5).mean()
+    d["dry_up"] = np.where(
+        vol_avg20_prior > 0,
+        vol_avg5_prior < (vol_avg20_prior * 0.8),
+        False
+    )
+
+    # 3. 「直近の壁（レジスタンス）の突破」の検知
+    d["recent_high_20d"] = d["High"].shift(1).rolling(20).max()
+    d["breakout_20d"] = d["Close"] > d["recent_high_20d"]
+
+    # 4. 「ローソクの質（引け値mid以上）」の判定
+    d["candle_mid_high"] = np.where(
+        d["High"] > d["Low"],
+        (d["Close"] - d["Low"]) / (d["High"] - d["Low"]) >= 0.5,
+        False
+    )
+    d["is_positive_candle"] = d["Close"] > d["Open"]
+
+    # 5. 「初動スナイパー(sniper_breakout)」シグナルの統合（流動性okを必須化）
+    d["sniper_breakout"] = (
+        d["ma_squeeze_20d"] &
+        d["dry_up"] &
+        d["breakout_20d"] &
+        (d["volume_ratio_20"] >= 1.5) &
+        d["candle_mid_high"] &
+        d["is_positive_candle"] &
+        d["liquidity_ok"]              # 流動性の担保
+    )
+
     d["trend_building_entry"] = d["trend_building"] & ~d["trend_building"].shift(1).fillna(False)
     d["breakout_confirmed_entry"] = d["breakout_confirmed"] & ~d["breakout_confirmed"].shift(1).fillna(False)
     d["congestion_tight_entry"] = d["congestion_tight"] & ~d["congestion_tight"].shift(1).fillna(False)
+    d["sniper_breakout_entry"] = d["sniper_breakout"] & ~d["sniper_breakout"].shift(1).fillna(False)
 
     return d
 
@@ -282,15 +331,10 @@ def find_events(hist: pd.DataFrame, fundamentals: dict, theme_context: dict, con
             ("trend_building", bool(row["trend_building_entry"])),
             ("breakout_confirmed", bool(row["breakout_confirmed_entry"])),
             ("congestion_tight", bool(row["congestion_tight_entry"])),
+            ("sniper_breakout", bool(row["sniper_breakout_entry"])),
         ):
             if not entry_flag:
                 continue
-
-            fundamental_accel = (
-                row.get("revenue_growth_pct") is not None
-                and row.get("profit_margin_pct") is not None
-                and row.get("roe_pct") is not None
-            )
 
             fwd = future_max_return(features["Close"], idx, config.forward_days)
             if fwd is None:
@@ -322,6 +366,10 @@ def find_events(hist: pd.DataFrame, fundamentals: dict, theme_context: dict, con
                     "breakout_52w": bool(row["breakout_52w"]),
                     "breakout_confirmed": bool(row["breakout_confirmed"]),
                     "congestion_tight": bool(row["congestion_tight"]),
+                    "ma_squeeze_20d": bool(row.get("ma_squeeze_20d", False)),
+                    "dry_up": bool(row.get("dry_up", False)),
+                    "breakout_20d": bool(row.get("breakout_20d", False)),
+                    "candle_mid_high": bool(row.get("candle_mid_high", False)),
                     "future_max_return_pct": fwd,
                     "big_winner": fwd >= config.big_winner_threshold_pct,
                 }
@@ -349,7 +397,9 @@ def summarize_events(events: pd.DataFrame) -> pd.DataFrame:
                 "avg_close_vs_52w_high_pct": float(grp["close_vs_52w_high_pct"].mean()),
             }
         )
-    summary = pd.DataFrame(rows).sort_values(["big_winner_rate", "signals"], ascending=[False, False]).reset_index(drop=True)
+        
+    # 【外れ値対策】評価ソート順を「中央値」の高い順に変更
+    summary = pd.DataFrame(rows).sort_values(["median_future_max_return_pct", "big_winner_rate"], ascending=[False, False]).reset_index(drop=True)
 
     extra_rows = []
     for label, mask in (
@@ -375,7 +425,8 @@ def summarize_events(events: pd.DataFrame) -> pd.DataFrame:
         )
 
     if extra_rows:
-        extra_df = pd.DataFrame(extra_rows).sort_values(["big_winner_rate", "signals"], ascending=[False, False]).reset_index(drop=True)
+        # こちらの追加サマリー部分も中央値でソート
+        extra_df = pd.DataFrame(extra_rows).sort_values(["median_future_max_return_pct", "big_winner_rate"], ascending=[False, False]).reset_index(drop=True)
         summary = pd.concat([summary, extra_df], ignore_index=True)
 
     return summary
@@ -390,6 +441,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--big-winner-threshold-pct", type=float, default=100.0)
     parser.add_argument("--fetch-timeout-sec", type=int, default=20)
     parser.add_argument("--max-tickers", type=int, default=None)
+    # --- 新規コマンドライン引数 ---
+    parser.add_argument("--min-turnover-million", type=float, default=10.0,
+                        help="Minimum 20-day average daily turnover in million JPY (default: 10.0)")
     return parser
 
 
@@ -401,6 +455,7 @@ def main() -> None:
         big_winner_threshold_pct=args.big_winner_threshold_pct,
         fetch_timeout_sec=args.fetch_timeout_sec,
         max_tickers=args.max_tickers,
+        min_daily_turnover_million=args.min_turnover_million, # ユーザー指定を反映
     )
 
     universe = load_universe(args.universe_csv, config.max_tickers)
@@ -489,7 +544,7 @@ def main() -> None:
     if not events_df.empty:
         events_df.to_csv(args.output_dir / "big_winner_events.csv", index=False, encoding="utf-8-sig")
     if not ticker_df.empty:
-        ticker_df.to_csv(args.output_dir / "big_winner_ticker_summary.csv", index=False, encoding="utf-8-sig")
+        ticker_df.to_csv(args.output_dir / "big_winner_ticker_summary.csv", index=False, encoding="utf-ok")
     if not summary_df.empty:
         summary_df.to_csv(args.output_dir / "big_winner_event_summary.csv", index=False, encoding="utf-8-sig")
 
