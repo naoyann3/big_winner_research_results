@@ -21,6 +21,8 @@ class MotionConfig:
     years: int = 5
     forward_days: int = 252
     big_winner_threshold_pct: float = 100.0
+    fetch_timeout_sec: int = 20
+    max_tickers: int | None = None
     min_daily_turnover_million: float = 10.0  # 最低1,000万円以上の売買代金
     cache_dir: Path = Path("data_cache")     # 既存のデータキャッシュを共通利用
     output_dir: Path = Path("big_winner_research_results")
