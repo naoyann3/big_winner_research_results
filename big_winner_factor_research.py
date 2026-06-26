@@ -544,7 +544,7 @@ def main() -> None:
     if not events_df.empty:
         events_df.to_csv(args.output_dir / "big_winner_events.csv", index=False, encoding="utf-8-sig")
     if not ticker_df.empty:
-        ticker_df.to_csv(args.output_dir / "big_winner_ticker_summary.csv", index=False, encoding="utf-ok")
+        ticker_df.to_csv(args.output_dir / "big_winner_ticker_summary.csv", index=False, encoding="utf-8-sig")
     if not summary_df.empty:
         summary_df.to_csv(args.output_dir / "big_winner_event_summary.csv", index=False, encoding="utf-8-sig")
 
