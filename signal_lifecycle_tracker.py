@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import time
 import random
+import argparse  # コマンドライン引数処理用に追加
 import numpy as np
 import pandas as pd
 import requests
@@ -56,7 +57,7 @@ def fetch_fundamentals(ticker: str) -> dict | None:
 
 def update_prices_daily(tickers: list[str]):
     """
-    最新5日分を一括取得し、既存キャッシュに重複なくマージ（Threads=FalseでSQLite競合を回避）
+    最新5日分を一括取得し、既存キャッシュに重複なくマージ
     """
     prices_dir = TrackerConfig.cache_dir / "prices"
     prices_dir.mkdir(parents=True, exist_ok=True)
@@ -160,15 +161,27 @@ def run_screener_for_today(tickers: list[str], market_median_close: pd.Series) -
             rs = gain / np.where(loss > 0, loss, 1.0)
             d["rsi14"] = 100 - (100 / (1 + rs))
             
+            # 【修正点】SyntaxError 回避：代入式を分割
+            d["squeeze_duration"] = d["ma_squeeze_20d"].shift(1).groupby((~d["ma_squeeze_20d"].shift(1)).cumsum()).cumsum()
+            
+            # 【修正点】分割したカラムを利用して判定
             d["sniper_motion"] = (
-                (d["squeeze_duration"] := d["ma_squeeze_20d"].shift(1).groupby((~d["ma_squeeze_20d"].shift(1)).cumsum()).cumsum()) >= 10
-            ) & (d["volatility_compression_ratio"] <= 0.4) & (d["vol_acceleration"] > 0) & (d["volume_ratio_20"] >= 2.0) & (d["ma25_acceleration"] > 0) & (d["breakout_age"] == 1) & (d["rs_velocity"] > 0) & d["candle_mid_high"] & d["is_positive_candle"] & d["liquidity_ok"]
+                (d["squeeze_duration"] >= 10) & 
+                (d["volatility_compression_ratio"] <= 0.4) & 
+                (d["vol_acceleration"] > 0) & 
+                (d["volume_ratio_20"] >= 2.0) & 
+                (d["ma25_acceleration"] > 0) & 
+                (d["breakout_age"] == 1) & 
+                (d["rs_velocity"] > 0) & 
+                d["candle_mid_high"] & 
+                d["is_positive_candle"] & 
+                d["liquidity_ok"]
+            )
             
             d["qualified_signal"] = d["sniper_motion"] & (d["rsi14"] >= 50.0) & (d["rsi14"] < 80.0)
             
             latest_row = d.iloc[-1]
             if bool(latest_row["qualified_signal"]):
-                # 財務情報読み込み
                 fundamentals = None
                 if fund_path.exists():
                     try:
@@ -193,10 +206,6 @@ def run_screener_for_today(tickers: list[str], market_median_close: pd.Series) -
     return signals
 
 
-# ==========================================
-# --- 新規：シグナル累積と毎日自動追跡ロジック ---
-# ==========================================
-
 def update_signal_lifecycle(today_signals: list[dict]):
     """
     シグナル台帳（CSV）に新規シグナルを追記し、既存のアクティブシグナルを毎日追跡更新します。
@@ -204,11 +213,9 @@ def update_signal_lifecycle(today_signals: list[dict]):
     db_file = TrackerConfig.db_file
     prices_dir = TrackerConfig.cache_dir / "prices"
     
-    # 既存の累積台帳ロード（なければ新規作成）
     if db_file.exists():
         df_db = pd.read_csv(db_file, encoding="utf-8-sig")
     else:
-        # 将来の拡張性を考慮し、カラムを追加しやすいDataFrameを新規定義
         df_db = pd.DataFrame(columns=[
             "ticker", "signal_date", "signal_close", "rsi14", "volume_ratio_20", "squeeze_ratio", 
             "sector", "industry", "status", "days_held", "current_close", "current_return_pct", 
@@ -216,9 +223,7 @@ def update_signal_lifecycle(today_signals: list[dict]):
             "reached_20pct", "reached_30pct", "reached_50pct", "dropped_10pct"
         ])
         
-    # 1. 本日の新規検知シグナルを台帳へ累積追加
     for sig in today_signals:
-        # 重複登録の防止
         is_duplicate = not df_db[(df_db["ticker"] == sig["ticker"]) & (df_db["signal_date"] == sig["signal_date"])].empty
         if is_duplicate:
             continue
@@ -232,7 +237,7 @@ def update_signal_lifecycle(today_signals: list[dict]):
             "squeeze_ratio": sig["squeeze_ratio"],
             "sector": sig["sector"],
             "industry": sig["industry"],
-            "status": "active", # 追跡中
+            "status": "active",
             "days_held": 0,
             "current_close": sig["signal_close"],
             "current_return_pct": 0.0,
@@ -248,7 +253,6 @@ def update_signal_lifecycle(today_signals: list[dict]):
         }
         df_db = pd.concat([df_db, pd.DataFrame([new_row])], ignore_index=True)
 
-    # 2. 追跡中（active）シグナルの日次アップデート処理
     active_mask = df_db["status"] == "active"
     for idx in df_db[active_mask].index:
         ticker = df_db.at[idx, "ticker"]
@@ -261,37 +265,30 @@ def update_signal_lifecycle(today_signals: list[dict]):
             
         try:
             d = pd.read_csv(price_path, index_col=0, parse_dates=True)
-            # シグナル日以降の株価履歴を抽出
             d_after = d.loc[sig_date_str:]
             if d_after.empty:
                 continue
                 
-            days_held = len(d_after) - 1 # シグナル翌日からの経過営業日数
+            days_held = len(d_after) - 1
             current_row = d_after.iloc[-1]
             
-            # 最高値・最安値の抽出
             max_high = float(d_after["High"].max())
             min_low = float(d_after["Low"].min())
             current_close = float(current_row["Close"])
             
-            # 最大上昇率・最大下落率・現在騰落率の再計算
             max_return_pct = (max_high - sig_close) / sig_close * 100.0
             min_return_pct = (min_low - sig_close) / sig_close * 100.0
             current_return_pct = (current_close - sig_close) / sig_close * 100.0
             
-            # 最大ドローダウン（最高値からの最大下落）の計算
-            # 毎日の累積最高値シリーズ
             cum_max = d_after["High"].cummax()
             drawdowns = (d_after["Low"] - cum_max) / cum_max * 100.0
             max_drawdown_pct = float(drawdowns.min())
             
-            # 各目標到達フラグの判定
             reached_20pct = max_return_pct >= 20.0
             reached_30pct = max_return_pct >= 30.0
             reached_50pct = max_return_pct >= 50.0
             dropped_10pct = min_return_pct <= -10.0
             
-            # データの書き戻し
             df_db.at[idx, "days_held"] = days_held
             df_db.at[idx, "current_close"] = current_close
             df_db.at[idx, "current_return_pct"] = round(current_return_pct, 2)
@@ -305,14 +302,12 @@ def update_signal_lifecycle(today_signals: list[dict]):
             df_db.at[idx, "reached_50pct"] = reached_50pct
             df_db.at[idx, "dropped_10pct"] = dropped_10pct
             
-            # 指定営業日数を経過したら追跡を自動終了
             if days_held >= TrackerConfig.tracking_days_limit:
                 df_db.at[idx, "status"] = "completed"
                 
         except Exception:
             continue
             
-    # 台帳の保存
     df_db.to_csv(db_file, index=False, encoding="utf-8-sig")
     print(f"シグナル自動追跡台帳を更新しました: 現在 {len(df_db)} 件のシグナルが累積されています。")
 
@@ -331,10 +326,8 @@ def generate_performance_report():
     if df.empty:
         return
         
-    # 勝率の定義（最大上昇率が15%以上に一度でも達した取引を「勝ち」とする）
     df["is_win"] = df["max_return_pct"] >= 15.0
     
-    # 1. 全体の基本成績
     total_signals = len(df)
     win_rate = df["is_win"].mean() * 100
     median_gain = df["max_return_pct"].median()
@@ -350,10 +343,9 @@ def generate_performance_report():
         {"Category": "Total Summary", "Condition": "All Signals", "Signals": total_signals, "Win Rate (%)": round(win_rate, 2), "Median Gain (%)": round(median_gain, 2), "Median Loss (%)": round(median_loss, 2), "Avg Days Held": round(avg_days, 1), "Reach 20% (%)": round(r_20, 2), "Reach 30% (%)": round(r_30, 2), "Reach 50% (%)": round(r_50, 2), "Drop -10% (%)": round(d_10, 2)}
     ]
     
-    # 2. セクター別の条件分析
     if "sector" in df.columns:
         for sector_name, grp in df.groupby("sector"):
-            if len(grp) < 3: # 統計の信頼性のため、シグナル数が3件未満のセクターはスキップ
+            if len(grp) < 3:
                 continue
             report_rows.append({
                 "Category": "Sector Analysis",
@@ -369,7 +361,6 @@ def generate_performance_report():
                 "Drop -10% (%)": round(grp["dropped_10pct"].mean() * 100, 2)
             })
             
-    # 3. 検出時RSI別の条件分析（50-65% vs 65-80%）
     if "rsi14" in df.columns:
         for rsi_range, mask in [
             ("RSI 50-65 (安全型)", (df["rsi14"] >= 50) & (df["rsi14"] < 65)),
@@ -392,20 +383,79 @@ def generate_performance_report():
                 "Drop -10% (%)": round(grp["dropped_10pct"].mean() * 100, 2)
             })
 
-    # レポートをCSVとして書き出し
     df_report = pd.DataFrame(report_rows)
     df_report.to_csv(report_file, index=False, encoding="utf-8-sig")
     print("勝率・改善案分析レポートの自動更新に成功しました。")
 
-# ==========================================
+
+# 【追加】通知関数の標準的実装
+def notify_daily_signal(today_signals: list[dict], df_uni: pd.DataFrame):
+    """
+    スプレッドシート（Webhook）への追記およびGmailによるプッシュ通知を実行します。
+    """
+    if not today_signals:
+        print("本日の合格シグナルはありませんでした。通知処理をスキップします。")
+        return
+
+    # 1. Googleスプレッドシート（Webhook）への送信
+    if WEBHOOK_URL:
+        try:
+            headers = {"Content-Type": "application/json"}
+            payload = {"signals": today_signals}
+            response = requests.post(WEBHOOK_URL, headers=headers, json=payload, timeout=10)
+            if response.status_code == 200:
+                print("スプレッドシート（Webhook）への送信に成功しました。")
+            else:
+                print(f"スプレッドシート送信失敗: ステータスコード {response.status_code}")
+        except Exception as e:
+            print(f"スプレッドシートWebhook送信エラー: {e}")
+
+    # 2. Gmail通知
+    if GMAIL_USER and GMAIL_PASS and NOTIFICATION_EMAIL:
+        try:
+            msg = MIMEMultipart()
+            msg["From"] = GMAIL_USER
+            msg["To"] = NOTIFICATION_EMAIL
+            msg["Subject"] = f"【Sniper OS】本日（{today_signals[0]['signal_date']}）のシグナル検出報告"
+
+            body = "本日、大相場初動シグナルに合格した銘柄は以下の通りです：\n\n"
+            for sig in today_signals:
+                body += (
+                    f"■ 銘柄: {sig['ticker']}\n"
+                    f"  ・終値: {sig['signal_close']} 円\n"
+                    f"  ・RSI(14): {sig['rsi14']} %\n"
+                    f"  ・出来高急増（20日平均比）: {sig['volume_ratio_20']} 倍\n"
+                    f"  ・MA収縮幅: {sig['squeeze_ratio']} %\n"
+                    f"  ・セクター: {sig['sector']}\n"
+                    f"  ・業界: {sig['industry']}\n"
+                    f"----------------------------------------\n"
+                )
+            
+            msg.attach(MIMEText(body, "plain", "utf-8"))
+
+            with smtplib.SMTP("smtp.gmail.com", 587) as server:
+                server.starttls()
+                server.login(GMAIL_USER, GMAIL_PASS)
+                server.send_message(msg)
+            print("通知メールの送信に成功しました。")
+        except Exception as e:
+            print(f"メール送信エラー: {e}")
 
 
 def main():
-    if not UNIVERSE_CSV.exists():
-        print("universe.csv が見つかりません。")
+    # 【追加】コマンドライン引数の解析
+    parser = argparse.ArgumentParser(description="Sniper OS Tracker")
+    parser.add_argument("--universe-csv", type=str, default="universe.csv", help="分析対象リストのCSVパス")
+    args = parser.parse_args()
+    
+    universe_path = Path(args.universe_csv)
+    prices_dir = TrackerConfig.cache_dir / "prices"
+    
+    if not universe_path.exists():
+        print(f"エラー: {universe_path} が見つかりません。")
         return
         
-    df_uni = pd.read_csv(UNIVERSE_CSV)
+    df_uni = pd.read_csv(universe_path)
     df_uni["ticker"] = df_uni["ticker"].map(normalize_ticker)
     tickers = df_uni["ticker"].dropna().tolist()
     
@@ -416,7 +466,7 @@ def main():
     print("Relative Strength用：市場中央値時系列を算出中...")
     all_closes = {}
     for t in tickers:
-        price_path = PRICES_DIR / f"{t}.csv"
+        price_path = prices_dir / f"{t}.csv"
         if price_path.exists():
             try:
                 # 負荷削減のため直近100日分だけでDataFrameを作成
