@@ -3,7 +3,6 @@ name: Daily Sniper Motion
 on:
   schedule:
     # 毎日日本時間23:15（世界協定時 UTC 14:15）に自動実行
-    # 混雑衝突を避けるため、Version1から15分ずらして起動します
     - cron: '15 14 * * *'
   workflow_dispatch: # 手動実行ボタンも有効化
 
@@ -13,6 +12,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          # ActionsによるGitプッシュを可能にするためにトークンを自動適用
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -33,12 +35,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install yfinance pandas numpy requests
 
-      # 日次スクリーナー（dailyモード）の実行
-      - name: Run Sniper Motion
+      # 日次スクリーナー兼ライフサイクル追跡の実行
+      - name: Run Sniper Motion and Update Lifecycle
         env:
           SPREADSHEET_WEBHOOK_URL: ${{ secrets.SPREADSHEET_WEBHOOK_URL }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
         run: |
-          python sniper_motion_research.py --universe-csv universe.csv --mode daily
+          python signal_lifecycle_tracker.py --universe-csv universe.csv
+
+      # 【最重要】更新されたデータをリポジトリへ自動コミット＆自動プッシュ
+      - name: Commit and Push Changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add data_cache/ signals_lifecycle.csv signal_performance_report.csv
+          # 変更がある場合のみ、コミットしてGitHubリポジトリへPush（保存）します
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update stock cache and signal lifecycle" && git push)
