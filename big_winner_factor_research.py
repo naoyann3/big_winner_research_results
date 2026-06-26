@@ -110,29 +110,39 @@ def download_databank(universe: pd.DataFrame, config: ResearchConfig):
     period_days = max(365 * config.years + 120, 365)
     period = f"{period_days}d"
     
-    # 接続回数を極小化するため、300銘柄ずつのバルクバッチに分けてダウンロード
     batch_size = 300
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i : i + batch_size]
         print(f"株価バッチ取得中: {i+1}〜{min(i+batch_size, len(tickers))} / {len(tickers)}")
         
         try:
-            # threads=False を指定することで、SQLiteの同時書き込みエラーを回避します
             data = yf.download(batch, period=period, interval="1d", group_by="ticker", auto_adjust=True, progress=False, threads=False)
             
             for t in batch:
-                if isinstance(data.columns, pd.MultiIndex):
-                    try:
+                price_path = prices_dir / f"{t}.csv"
+                try:
+                    if isinstance(data.columns, pd.MultiIndex):
                         t_data = data[t].dropna()
-                        if not t_data.empty and len(t_data) >= 120:
-                            t_data.to_csv(prices_dir / f"{t}.csv", index=True, encoding="utf-8-sig")
-                    except KeyError:
-                        pass
-                else:
-                    if not data.empty:
-                        data.to_csv(prices_dir / f"{t}.csv", index=True, encoding="utf-8-sig")
+                    else:
+                        t_data = data.dropna()
+                        
+                    if t_data.empty:
+                        continue
+                        
+                    t_data = t_data[["Open", "High", "Low", "Close", "Volume"]]
+                    
+                    if not price_path.exists():
+                        df_combined = t_data.sort_index()
+                    else:
+                        df_existing = pd.read_csv(price_path, index_col=0, parse_dates=True)
+                        df_combined = pd.concat([df_existing, t_data])
+                        df_combined = df_combined[~df_combined.index.duplicated(keep="last")].sort_index()
+                        
+                    df_combined.to_csv(price_path, index=True, encoding="utf-8-sig")
+                except Exception:
+                    continue
         except Exception as e:
-            print(f"  -> バッチ取得エラー (スキップして次へ): {e}")
+            print(f"  -> バッチ取得エラー: {e}")
             continue
                 
     print("\n--- 2. ファンダメンタルズ情報のダウンロードを開始します ---")
@@ -150,7 +160,7 @@ def download_databank(universe: pd.DataFrame, config: ResearchConfig):
                 json.dump(fundamentals, f, ensure_ascii=False, indent=4)
             time.sleep(random.uniform(1.5, 3.0))
         else:
-            print(f"  -> {ticker} の財務データ取得に失敗（スキップ・次回再実行時に再試行）")
+            print(f"  -> {ticker} の財務データ取得に失敗（スクレイピング制限回避のためスキップ）")
 
     print("\nデータバンクの構築処理がすべて完了しました。")
 
@@ -343,11 +353,20 @@ def future_max_return(close: pd.Series, start_idx: int, forward_days: int) -> fl
     return (future_max - entry) / entry * 100.0
 
 
+# --- 新規追加：未来の最大下落率を算出する関数 ---
+def future_min_return(close: pd.Series, start_idx: int, forward_days: int) -> float | None:
+    end_idx = min(start_idx + forward_days, len(close) - 1)
+    if start_idx >= end_idx:
+        return None
+    future_min = float(close.iloc[start_idx + 1 : end_idx + 1].min())
+    entry = float(close.iloc[start_idx])
+    return (future_min - entry) / entry * 100.0
+
+
 def find_events(hist: pd.DataFrame, fundamentals: dict | None, theme_context: dict, config: ResearchConfig) -> pd.DataFrame:
     features = calc_features(hist, config)
     rows = []
     
-    # ファンダメンタルズ情報がキャッシュに無くても(None)、検証を止めずにテクニカルのみで検証できるように修正
     if fundamentals is None:
         theme_tailwind = False
         fundamental_support = False
@@ -379,8 +398,11 @@ def find_events(hist: pd.DataFrame, fundamentals: dict | None, theme_context: di
             if not entry_flag:
                 continue
 
-            fwd = future_max_return(features["Close"], idx, config.forward_days)
-            if fwd is None:
+            fwd_max = future_max_return(features["Close"], idx, config.forward_days)
+            # --- 新規：最大下落率の計算 ---
+            fwd_min = future_min_return(features["Close"], idx, config.forward_days)
+            
+            if fwd_max is None or fwd_min is None:
                 continue
 
             rows.append(
@@ -413,8 +435,10 @@ def find_events(hist: pd.DataFrame, fundamentals: dict | None, theme_context: di
                     "dry_up": bool(row.get("dry_up", False)),
                     "breakout_20d": bool(row.get("breakout_20d", False)),
                     "candle_mid_high": bool(row.get("candle_mid_high", False)),
-                    "future_max_return_pct": fwd,
-                    "big_winner": fwd >= config.big_winner_threshold_pct,
+                    # 期待値計算の変数を出力にセット
+                    "future_max_return_pct": fwd_max,
+                    "future_min_return_pct": fwd_min, # 新規追加
+                    "big_winner": fwd_max >= config.big_winner_threshold_pct,
                 }
             )
 
@@ -435,6 +459,10 @@ def summarize_events(events: pd.DataFrame) -> pd.DataFrame:
                 "big_winner_rate": float(grp["big_winner"].mean()),
                 "avg_future_max_return_pct": float(grp["future_max_return_pct"].mean()),
                 "median_future_max_return_pct": float(grp["future_max_return_pct"].median()),
+                # --- 新規：最大下落率の集計 ---
+                "avg_future_min_return_pct": float(grp["future_min_return_pct"].mean()),
+                "median_future_min_return_pct": float(grp["future_min_return_pct"].median()),
+                # -----------------------------
                 "avg_volume_ratio_20": float(grp["signal_volume_ratio_20"].mean()),
                 "avg_congestion_width_pct": float(grp["ma_congestion_width_pct"].mean()),
                 "avg_close_vs_52w_high_pct": float(grp["close_vs_52w_high_pct"].mean()),
@@ -460,6 +488,10 @@ def summarize_events(events: pd.DataFrame) -> pd.DataFrame:
                 "big_winner_rate": float(grp["big_winner"].mean()),
                 "avg_future_max_return_pct": float(grp["future_max_return_pct"].mean()),
                 "median_future_max_return_pct": float(grp["future_max_return_pct"].median()),
+                # --- 新規：最大下落率の集計 ---
+                "avg_future_min_return_pct": float(grp["future_min_return_pct"].mean()),
+                "median_future_min_return_pct": float(grp["future_min_return_pct"].median()),
+                # -----------------------------
                 "avg_volume_ratio_20": float(grp["signal_volume_ratio_20"].mean()),
                 "avg_congestion_width_pct": float(grp["ma_congestion_width_pct"].mean()),
                 "avg_close_vs_52w_high_pct": float(grp["close_vs_52w_high_pct"].mean()),
@@ -519,29 +551,24 @@ def main() -> None:
     prices_dir = config.cache_dir / "prices"
     fund_dir = config.cache_dir / "fundamentals"
 
-    # --- 新規追加：読み込み進捗のリアルタイム表示 ---
     print("\nキャッシュファイルの読み込みを開始します...")
     for i, row in universe.iterrows():
         ticker = row["ticker"]
         name = row.get("name", ticker)
         
-        # 100件ごとに進捗を画面に出力（フリーズではないことを明示します）
+        # 100件ごとに進捗を画面に出力
         if (i + 1) % 100 == 0 or (i + 1) == len(universe):
             print(f"  [ロード中] {i+1} / {len(universe)} 銘柄...")
         
         price_path = prices_dir / f"{ticker}.csv"
         fund_path = fund_dir / f"{ticker}.json"
         
-        # 株価データさえローカルキャッシュにあれば、財務データがなくても検証を進められるよう変更
         if not price_path.exists():
-            # キャッシュがないものは読み飛ばします
             continue
             
         try:
-            # 日時情報を正しくロードするために index_col=0, parse_dates=True
             hist = pd.read_csv(price_path, index_col=0, parse_dates=True)
             
-            # 財務データ（ファンダメンタルズ）の読み込み。存在しない場合は None とする
             fundamentals = None
             status_str = "no_fundamentals"
             if fund_path.exists():
@@ -564,7 +591,6 @@ def main() -> None:
     all_events: list[pd.DataFrame] = []
     ticker_rows = []
 
-    # --- 新規追加：シグナル計算のリアルタイム進捗表示 ---
     print("\nイベント検出と過去検証の計算を開始します...")
     for idx, rec in enumerate(records):
         ticker = rec["ticker"]
@@ -575,7 +601,6 @@ def main() -> None:
         if (idx + 1) % 100 == 0 or (idx + 1) == len(records):
             print(f"  [計算中] {idx+1} / {len(records)} 銘柄 ({ticker})...")
 
-        # 財務データが無くても、株価履歴（hist）さえあればシグナル判定へ進む
         if hist is None:
             ticker_rows.append({"ticker": ticker, "name": name, "events": 0, "status": rec["status"]})
             continue
