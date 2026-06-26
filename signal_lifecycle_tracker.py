@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import time
 import random
+import argparse  # コマンドライン引数処理用に追加
 import numpy as np
 import pandas as pd
 import requests
@@ -56,7 +57,7 @@ def fetch_fundamentals(ticker: str) -> dict | None:
 
 def update_prices_daily(tickers: list[str]):
     """
-    最新5日分を一括取得し、既存キャッシュに重複なくマージ（Threads=FalseでSQLite競合を回避）
+    最新5日分を一括取得し、既存キャッシュに重複なくマージ
     """
     prices_dir = TrackerConfig.cache_dir / "prices"
     prices_dir.mkdir(parents=True, exist_ok=True)
@@ -95,76 +96,6 @@ def update_prices_daily(tickers: list[str]):
                     continue
         except Exception:
             continue
-
-
-def _download_and_merge(tickers: list[str], period: str, prices_dir: Path, is_new: bool):
-    """
-    株価データを一括ダウンロードし、マージするヘルパー関数
-    """
-    batch_size = 300
-    for i in range(0, len(tickers), batch_size):
-        batch = tickers[i : i + batch_size]
-        print(f"  バッチ取得中: {i+1}〜{min(i+batch_size, len(tickers))} / {len(tickers)}")
-        
-        try:
-            data = yf.download(batch, period=period, interval="1d", group_by="ticker", auto_adjust=True, progress=False, threads=False)
-            
-            for t in batch:
-                price_path = prices_dir / f"{t}.csv"
-                try:
-                    if isinstance(data.columns, pd.MultiIndex):
-                        t_data = data[t].dropna()
-                    else:
-                        t_data = data.dropna()
-                        
-                    if t_data.empty:
-                        continue
-                        
-                    t_data = t_data[["Open", "High", "Low", "Close", "Volume"]]
-                    
-                    if is_new or not price_path.exists():
-                        df_combined = t_data.sort_index()
-                    else:
-                        df_existing = pd.read_csv(price_path, index_col=0, parse_dates=True)
-                        df_combined = pd.concat([df_existing, t_data])
-                        df_combined = df_combined[~df_combined.index.duplicated(keep="last")].sort_index()
-                        
-                    df_combined.to_csv(price_path, index=True, encoding="utf-8-sig")
-                except Exception:
-                    continue
-        except Exception as e:
-            print(f"  バッチダウンロードエラー: {e}")
-            continue
-
-
-def update_prices_daily_full(tickers: list[str]):
-    """
-    株価データの差分/新規構築を判断して実行します。
-    """
-    prices_dir = TrackerConfig.cache_dir / "prices"
-    prices_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 既存のキャッシュ有無で銘柄を切り分け
-    existing_tickers = []
-    new_tickers = []
-    
-    for t in tickers:
-        if (prices_dir / f"{t}.csv").exists():
-            existing_tickers.append(t)
-        else:
-            new_tickers.append(t)
-            
-    # ① キャッシュが存在しない銘柄（新規実行時など）：5年分を落として自動構築
-    if new_tickers:
-        print(f"\n新規銘柄（キャッシュなし）の5年分株価ダウンロードを開始します... (対象: {len(new_tickers)} 銘柄)")
-        period_days = max(365 * TrackerConfig.years + 120, 365)
-        period_new = f"{period_days}d"
-        _download_and_merge(new_tickers, period_new, prices_dir, is_new=True)
-        
-    # ② キャッシュがすでに存在する銘柄：最新5日分を落として末尾に差分マージ
-    if existing_tickers:
-        print(f"\n既存銘柄の差分更新（最新5日分）を開始します... (対象: {len(existing_tickers)} 銘柄)")
-        _download_and_merge(existing_tickers, "5d", prices_dir, is_new=False)
 
 
 def run_screener_for_today(tickers: list[str], market_median_close: pd.Series) -> list[dict]:
@@ -230,9 +161,10 @@ def run_screener_for_today(tickers: list[str], market_median_close: pd.Series) -
             rs = gain / np.where(loss > 0, loss, 1.0)
             d["rsi14"] = 100 - (100 / (1 + rs))
             
-            # 【バグ修正】SyntaxErrorを回避するため、添字指定(subscript)への代入演算子(:=)の使用を廃止
+            # 【修正点】SyntaxError 回避：代入式を分割
             d["squeeze_duration"] = d["ma_squeeze_20d"].shift(1).groupby((~d["ma_squeeze_20d"].shift(1)).cumsum()).cumsum()
             
+            # 【修正点】分割したカラムを利用して判定
             d["sniper_motion"] = (
                 (d["squeeze_duration"] >= 10) & 
                 (d["volatility_compression_ratio"] <= 0.4) & 
@@ -281,7 +213,6 @@ def update_signal_lifecycle(today_signals: list[dict]):
     db_file = TrackerConfig.db_file
     prices_dir = TrackerConfig.cache_dir / "prices"
     
-    # 既存の累積台帳ロード（なければ新規作成）
     if db_file.exists():
         df_db = pd.read_csv(db_file, encoding="utf-8-sig")
     else:
@@ -292,7 +223,6 @@ def update_signal_lifecycle(today_signals: list[dict]):
             "reached_20pct", "reached_30pct", "reached_50pct", "dropped_10pct"
         ])
         
-    # 1. 本日の新規検知シグナルを台帳へ累積追加
     for sig in today_signals:
         is_duplicate = not df_db[(df_db["ticker"] == sig["ticker"]) & (df_db["signal_date"] == sig["signal_date"])].empty
         if is_duplicate:
@@ -323,7 +253,6 @@ def update_signal_lifecycle(today_signals: list[dict]):
         }
         df_db = pd.concat([df_db, pd.DataFrame([new_row])], ignore_index=True)
 
-    # 2. 追跡中（active）シグナルの日次アップデート処理
     active_mask = df_db["status"] == "active"
     for idx in df_db[active_mask].index:
         ticker = df_db.at[idx, "ticker"]
@@ -390,11 +319,16 @@ def generate_performance_report():
     db_file = TrackerConfig.db_file
     report_file = TrackerConfig.report_file
     
+    # 早期リターン時用の空のデータフレーム
+    empty_df = pd.DataFrame(columns=["Category", "Condition", "Signals", "Win Rate (%)"])
+    
     if not db_file.exists():
+        empty_df.to_csv(report_file, index=False, encoding="utf-8-sig")
         return
         
     df = pd.read_csv(db_file)
     if df.empty:
+        empty_df.to_csv(report_file, index=False, encoding="utf-8-sig")
         return
         
     df["is_win"] = df["max_return_pct"] >= 15.0
@@ -459,75 +393,88 @@ def generate_performance_report():
     print("勝率・改善案分析レポートの自動更新に成功しました。")
 
 
-def notify_daily_signal(signals: list[dict], universe: pd.DataFrame):
+# 【追加】通知関数の標準的実装
+def notify_daily_signal(today_signals: list[dict], df_uni: pd.DataFrame):
     """
-    毎日Actionsが自動実行され、合格銘柄があった際のスプレッドシート追記とメール送信です。
+    スプレッドシート（Webhook）への追記およびGmailによるプッシュ通知を実行します。
     """
-    if not signals:
-        print("\n本日、Sniper Motion の合格シグナルを検出した銘柄はありませんでした。")
+    if not today_signals:
+        print("本日の合格シグナルはありませんでした。通知処理をスキップします。")
         return
-        
-    name_map = dict(zip(universe["ticker"], universe["name"]))
-    for sig in signals:
-        sig["name"] = name_map.get(sig["ticker"], sig["ticker"])
-        
+
+    # 1. Googleスプレッドシート（Webhook）への送信
     if WEBHOOK_URL:
         try:
-            res = requests.post(WEBHOOK_URL, json={"signals": signals}, headers={"Content-Type": "application/json"})
-            if res.status_code == 200:
-                print("Googleスプレッドシートへの自動追記に成功しました。")
+            headers = {"Content-Type": "application/json"}
+            payload = {"signals": today_signals}
+            response = requests.post(WEBHOOK_URL, headers=headers, json=payload, timeout=10)
+            if response.status_code == 200:
+                print("スプレッドシート（Webhook）への送信に成功しました。")
             else:
-                print(f"スプレッドシート連携エラー: {res.text}")
+                print(f"スプレッドシート送信失敗: ステータスコード {response.status_code}")
         except Exception as e:
-            print(f"スプレッドシート連携に失敗しました: {e}")
-            
+            print(f"スプレッドシートWebhook送信エラー: {e}")
+
+    # 2. Gmail通知
     if GMAIL_USER and GMAIL_PASS and NOTIFICATION_EMAIL:
         try:
             msg = MIMEMultipart()
             msg["From"] = GMAIL_USER
             msg["To"] = NOTIFICATION_EMAIL
-            msg["Subject"] = f"【MOTION検知】Sniper Motion 心理転換初動銘柄 ({signals[0]['date']})"
-            
-            body = "静寂から需給の不均衡（最初の爆発）が起きた「Sniper Motion」の検知通知です。\n\n"
-            body += "=========================================\n"
-            for sig in signals:
-                body += f"■ {sig['name']} ({sig['ticker']})\n"
-                body += f"  ・終値: {sig['close']} 円\n"
-                body += f"  ・RSI(14): {sig['rsi']} %\n"
-                body += f"  ・セクター: {sig['sector']} / 業界: {sig['industry']}\n"
-                body += "=========================================\n"
-            body += "\n※スプレッドシートにも自動追記されました。翌朝の始値の動きを観察してください。\n"
+            msg["Subject"] = f"【Sniper OS】本日（{today_signals[0]['signal_date']}）のシグナル検出報告"
+
+            body = "本日、大相場初動シグナルに合格した銘柄は以下の通りです：\n\n"
+            for sig in today_signals:
+                body += (
+                    f"■ 銘柄: {sig['ticker']}\n"
+                    f"  ・終値: {sig['signal_close']} 円\n"
+                    f"  ・RSI(14): {sig['rsi14']} %\n"
+                    f"  ・出来高急増（20日平均比）: {sig['volume_ratio_20']} 倍\n"
+                    f"  ・MA収縮幅: {sig['squeeze_ratio']} %\n"
+                    f"  ・セクター: {sig['sector']}\n"
+                    f"  ・業界: {sig['industry']}\n"
+                    f"----------------------------------------\n"
+                )
             
             msg.attach(MIMEText(body, "plain", "utf-8"))
-            
+
             with smtplib.SMTP("smtp.gmail.com", 587) as server:
                 server.starttls()
                 server.login(GMAIL_USER, GMAIL_PASS)
-                server.sendmail(GMAIL_USER, [NOTIFICATION_EMAIL], msg.as_string())
-            print("Sniper Motion 合格通知メールを送信しました。")
+                server.send_message(msg)
+            print("通知メールの送信に成功しました。")
         except Exception as e:
-            print(f"メール送信に失敗しました: {e}")
+            print(f"メール送信エラー: {e}")
 
 
 def main():
-    if not UNIVERSE_CSV.exists():
-        print("universe.csv が見つかりません。")
+    # 【追加】コマンドライン引数の解析
+    parser = argparse.ArgumentParser(description="Sniper OS Tracker")
+    parser.add_argument("--universe-csv", type=str, default="universe.csv", help="分析対象リストのCSVパス")
+    args = parser.parse_args()
+    
+    universe_path = Path(args.universe_csv)
+    prices_dir = TrackerConfig.cache_dir / "prices"
+    
+    if not universe_path.exists():
+        print(f"エラー: {universe_path} が見つかりません。")
         return
         
-    df_uni = pd.read_csv(UNIVERSE_CSV)
+    df_uni = pd.read_csv(universe_path)
     df_uni["ticker"] = df_uni["ticker"].map(normalize_ticker)
     tickers = df_uni["ticker"].dropna().tolist()
     
-    # 1. 本日分の株価データをマージアップデート（threads=FalseによるSQLite衝突回避）
-    update_prices_daily_full(tickers)
+    # 1. 本日分の株価データをマージアップデート
+    update_prices_daily(tickers)
     
     # 2. 相対強度のベンチマークとして「市場平均（本日の中央値Close）」を動的算出
     print("Relative Strength用：市場中央値時系列を算出中...")
     all_closes = {}
     for t in tickers:
-        price_path = PRICES_DIR / f"{t}.csv"
+        price_path = prices_dir / f"{t}.csv"
         if price_path.exists():
             try:
+                # 負荷削減のため直近100日分だけでDataFrameを作成
                 df_temp = pd.read_csv(price_path, index_col=0, parse_dates=True)
                 all_closes[t] = df_temp["Close"].iloc[-100:]
             except Exception:
