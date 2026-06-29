@@ -7,10 +7,10 @@ from datetime import datetime
 
 # --- 設定 ---
 class AnalyzerConfig:
-    cache_dir = Path("data_cache")
-    prices_dir = Path("data_cache/prices")
-    fund_dir = Path("data_cache/fundamentals")
-    output_dir = Path("research_results")
+    cache_dir = Path("../data_cache")
+    prices_dir = Path("../data_cache/prices")
+    fund_dir = Path("../data_cache/fundamentals")
+    output_dir = Path("research_results")  # これはそのまま（このフォルダ内に結果が出ます）
     
     # 大化け判定基準（例：120営業日（約半年）以内に最低2倍（+100%））
     holding_window = 120
@@ -231,7 +231,7 @@ def main():
     AnalyzerConfig.output_dir.mkdir(parents=True, exist_ok=True)
     
     # 全上場銘柄のリスト取得
-    universe_path = Path("universe.csv")
+    universe_path = Path("../universe.csv")  # ← ここに「../」を追加します
     if not universe_path.exists():
         print("universe.csv が見つかりません。")
         return
