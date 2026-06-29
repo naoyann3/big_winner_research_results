@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- 設定 ---
 class EngineConfig:
@@ -25,7 +25,10 @@ class MarketStateEngine:
         d = df.copy()
         
         # 移動平均
-        d["ma25"] = d["Close"].rolling(25).mean()
+        for ma in [25, 75]:
+            d[f"ma{ma}"] = d["Close"].rolling(ma).mean()
+            d[f"ma{ma}_dev"] = (d["Close"] - d[f"ma{ma}"]) / d[f"ma{ma}"] * 100
+            
         d["ma25_slope"] = d["ma25"].pct_change(5) * 100
         d["vol_avg20"] = d["Volume"].rolling(20).mean()
         d["vol_ratio_20"] = d["Volume"] / d["vol_avg20"]
@@ -67,7 +70,6 @@ class MarketStateEngine:
         
         current_state = 0
         state_days = 0
-        state_entry_date = None
         
         # 統計取得用
         transitions_counter = {
@@ -104,7 +106,6 @@ class MarketStateEngine:
             
             # --- 失敗（Drop）の判定条件：直近高値から10%下落したら強制的に State 0 へ ---
             if current_state > 0 and close < last_high * 0.90:
-                # 失敗カウンターの記録
                 transitions_counter[f"State{current_state}_to_Fail"] = transitions_counter.get(f"State{current_state}_to_Fail", 0) + 1
                 current_state = 0
                 state_days = 0
@@ -114,49 +115,41 @@ class MarketStateEngine:
             next_state = current_state
             
             if current_state == 0:
-                # [平常] ➔ BB幅が過去60日最小（極限スクイーズ）に達したら
-                if bb_width <= bb_min * 1.05: # 最小値の5%以内
+                if bb_width <= bb_min * 1.05:
                     next_state = 1
                     
             elif current_state == 1:
-                # [スクイーズ開始] ➔ 25日線が上向き、且つ RSI が50を上抜けたら
                 if ma25_slope > 0 and rsi14 >= 50.0:
                     next_state = 2
                     transitions_counter["Squeeze_to_Reversal"] += 1
                     
             elif current_state == 2:
-                # [反転・目覚め] ➔ 出来高が初めて20日平均の2倍を超えたら（先行資金流入）
                 if vol_ratio >= 2.0:
                     next_state = 3
                     transitions_counter["Reversal_to_Inflow"] += 1
                     
             elif current_state == 3:
-                # [先行流入] ➔ 総合変化スコアが極大（簡易的に出来高3倍超、且つ大陽線）
                 if vol_ratio >= 3.0 and close > row["Open"]:
                     next_state = 4
                     transitions_counter["Inflow_to_TrueDay0"] += 1
                     
             elif current_state == 4:
-                # [True Day0] ➔ 押し目による一時的な株価調整（終値下落）、且つ出来高枯渇（1倍未満）
                 if close < row["Open"] and vol_ratio < 1.0:
                     next_state = 5
                     transitions_counter["TrueDay0_to_Shakeout"] += 1
                     
             elif current_state == 5:
-                # [Shakeout] ➔ 20日高値をぶち抜く本格ブレイクアウトが発生
                 if close > high_20d and vol_ratio >= 1.5:
                     next_state = 6
                     transitions_counter["Shakeout_to_MainRun"] += 1
                     
             elif current_state == 6:
-                # [本上昇] ➔ 特になし（トレンド継続中、高値10%下落でState 0へ戻る）
                 pass
                 
             # 状態更新の処理
             if next_state != current_state:
                 current_state = next_state
                 state_days = 1
-                state_entry_date = d.index[idx].strftime("%Y-%m-%d")
             else:
                 state_days += 1
                 
@@ -227,21 +220,32 @@ def main():
             
             # 過去30日間の状態遷移履歴（文字列化）
             history_states = df_sim["current_state"].iloc[-30:].astype(str).tolist()
-            state_history_str = "➔".join(dict.fromkeys(history_states)) # 重複を除いて遷移順を可視化
+            state_history_str = "➔".join(dict.fromkeys(history_states))
             
-            # 期待スコアと危険度の簡易数理モデル（滞在日数やStateの深さから算出）
-            # 深いStateに長くいすぎるのは良くない（煮詰まって下落する危険性）、などの力学
+            # 【修正点】日付型の計算（timedelta）を使わずに、時系列インデックスの位置から日付を特定（100%安全設計）
+            state_entry_idx = len(df_sim) - latest_days
+            if state_entry_idx < 0:
+                state_entry_idx = 0
+            raw_entry_date = df_sim.index[state_entry_idx]
+            
+            # 型チェック（日付型ならフォーマット、文字列ならそのまま切り出し）
+            if hasattr(raw_entry_date, "strftime"):
+                state_entry_date_str = raw_entry_date.strftime("%Y-%m-%d")
+            else:
+                state_entry_date_str = str(raw_entry_date)[:10]
+            
+            # 期待スコアと危険度の簡易数理モデル
             expect_score = 0
             danger_score = 0
             if latest_state == 1: expect_score = 30
             elif latest_state == 2: expect_score = 50
             elif latest_state == 3: expect_score = 70; danger_score = 20
             elif latest_state == 4: expect_score = 85; danger_score = 30
-            elif latest_state == 5: expect_score = 95; danger_score = 15 # 押し目は絶好の仕込み場
-            elif latest_state == 6: expect_score = 80; danger_score = 40 # すでに上昇中
+            elif latest_state == 5: expect_score = 95; danger_score = 15
+            elif latest_state == 6: expect_score = 80; danger_score = 40
             
             if latest_days > 20 and latest_state in [3, 4, 5]:
-                danger_score += 20 # 停滞しているのは危険兆候
+                danger_score += 20
 
             # ファンダメンタルズのロード
             fund_data = {}
@@ -254,10 +258,10 @@ def main():
 
             daily_states.append({
                 "ticker": t,
-                "name": t, # あとでマッピング可能
+                "name": t,
                 "current_state": f"State {latest_state}",
                 "days_in_state": latest_days,
-                "state_entry_date": (df_sim.index[-1] - timedelta(days=latest_days)).strftime("%Y-%m-%d"),
+                "state_entry_date": state_entry_date_str,
                 "state_history": state_history_str,
                 "rsi14": round(float(latest_row["rsi14"]), 1) if not pd.isna(latest_row["rsi14"]) else None,
                 "vol_ratio": round(float(latest_row["vol_ratio_20"]), 2) if not pd.isna(latest_row["vol_ratio_20"]) else None,
@@ -267,9 +271,16 @@ def main():
                 "industry": fund_data.get("industry", "不明")
             })
             
-        except Exception:
+        except Exception as e:
+            # デバッグ用にエラーが出た場合はスキップするが、通常は発生しない
             continue
             
+    # 【安全対策】取得データが空っぽだった場合の安全弁
+    if not daily_states:
+        print("\n[エラー]: 状態スキャンは完了しましたが、有効なデータが1件も取得できませんでした。")
+        print("原因として、CSVデータの読み込み失敗やデータ形式のズレが考えられます。")
+        return
+
     # レポート保存
     df_report = pd.DataFrame(daily_states)
     report_path = EngineConfig.output_dir / "daily_market_state_report.csv"
