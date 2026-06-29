@@ -88,8 +88,8 @@ def analyze_feature_importance_ml(df: pd.DataFrame):
     print("\n==================================================")
     print("★ AIが暴いた「大化け株の初動（Day 0）」に最も寄与した特徴量ランキング ★")
     print("==================================================")
-    for idx, row in importance_df.iterrows():
-        print(f" {idx+1:2d}位: {row['Feature']:20s} (スコア: {row['Importance_Score']:.4f})")
+    for rank, (idx, row) in enumerate(importance_df.iterrows(), 1):
+        print(f" {rank:2d}位: {row['Feature']:20s} (スコア: {row['Importance_Score']:.4f})")
     print("==================================================")
     print(f"  [成功] 機械学習レポートを保存しました: big_winner_feature_importance_ml.csv")
 
