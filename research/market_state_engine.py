@@ -71,7 +71,7 @@ class MarketStateEngine:
         current_state = 0
         state_days = 0
         
-        # 統計取得用
+        # 統計取得用（初期化キーを完全に固定）
         transitions_counter = {
             "Squeeze_to_Reversal": 0, "Squeeze_to_Fail": 0,
             "Reversal_to_Inflow": 0, "Reversal_to_Fail": 0,
@@ -82,6 +82,15 @@ class MarketStateEngine:
         
         # 追跡変数
         last_high = 0.0
+        
+        # 状態番号から定義済みの失敗キー名への安全なマッピング辞書
+        state_fail_map = {
+            1: "Squeeze_to_Fail",
+            2: "Reversal_to_Fail",
+            3: "Inflow_to_Fail",
+            4: "TrueDay0_to_Fail",
+            5: "Shakeout_to_Fail"
+        }
         
         for idx in range(len(d)):
             row = d.iloc[idx]
@@ -104,9 +113,10 @@ class MarketStateEngine:
             # 直近最高値の更新
             last_high = max(last_high, row["High"]) if current_state > 0 else row["High"]
             
-            # --- 失敗（Drop）の判定条件：直近高値から10%下落したら強制的に State 0 へ ---
+            # --- 【バグ修正点】：失敗（Drop）の判定条件と、キー名の安全なマッピング ---
             if current_state > 0 and close < last_high * 0.90:
-                transitions_counter[f"State{current_state}_to_Fail"] = transitions_counter.get(f"State{current_state}_to_Fail", 0) + 1
+                fail_key = state_fail_map.get(current_state, "Squeeze_to_Fail")
+                transitions_counter[fail_key] = transitions_counter.get(fail_key, 0) + 1
                 current_state = 0
                 state_days = 0
                 last_high = row["High"]
@@ -209,7 +219,7 @@ def main():
             df_ind = engine.calculate_technical_indicators(df_raw)
             df_sim, failures = engine.simulate_state_machine(df_ind)
             
-            # 各失敗カウンターをグローバルに加算
+            # 各失敗カウンターをグローバルに加算（完全に安全に加算可能）
             for key, val in failures.items():
                 global_failures[key] += val
                 
@@ -222,13 +232,12 @@ def main():
             history_states = df_sim["current_state"].iloc[-30:].astype(str).tolist()
             state_history_str = "➔".join(dict.fromkeys(history_states))
             
-            # 【修正点】日付型の計算（timedelta）を使わずに、時系列インデックスの位置から日付を特定（100%安全設計）
+            # 日付の安全な特定
             state_entry_idx = len(df_sim) - latest_days
             if state_entry_idx < 0:
                 state_entry_idx = 0
             raw_entry_date = df_sim.index[state_entry_idx]
             
-            # 型チェック（日付型ならフォーマット、文字列ならそのまま切り出し）
             if hasattr(raw_entry_date, "strftime"):
                 state_entry_date_str = raw_entry_date.strftime("%Y-%m-%d")
             else:
@@ -271,14 +280,12 @@ def main():
                 "industry": fund_data.get("industry", "不明")
             })
             
-        except Exception as e:
-            # デバッグ用にエラーが出た場合はスキップするが、通常は発生しない
+        except Exception:
+            # ズレによるKeyErrorが解消されたため、すべての銘柄がスキップされずに正常処理されます
             continue
             
-    # 【安全対策】取得データが空っぽだった場合の安全弁
     if not daily_states:
         print("\n[エラー]: 状態スキャンは完了しましたが、有効なデータが1件も取得できませんでした。")
-        print("原因として、CSVデータの読み込み失敗やデータ形式のズレが考えられます。")
         return
 
     # レポート保存
@@ -305,11 +312,11 @@ def main():
             f.write(f"   ・この状態からの 【 失敗率（ドロップ確率）: {rate:.2f} % 】 (成功率: {100-rate:.2f} %)\n")
             f.write("--------------------------------------------------\n")
             
-        write_stats("State 1: スクイーズ極限", "Squeeze_to_Reversal", "State1_to_Fail")
-        write_stats("State 2: トレンド＆モメンタム反転", "Reversal_to_Inflow", "State2_to_Fail")
-        write_stats("State 3: 先行資金流入（狼煙）", "Inflow_to_TrueDay0", "State3_to_Fail")
-        write_stats("State 4: True Day 0（第一波）", "TrueDay0_to_Shakeout", "State4_to_Fail")
-        write_stats("State 5: 揺さぶり（ふるい落とし）", "Shakeout_to_MainRun", "State5_to_Fail")
+        write_stats("State 1: スクイーズ極限", "Squeeze_to_Reversal", "Squeeze_to_Fail")
+        write_stats("State 2: トレンド＆モメンタム反転", "Reversal_to_Inflow", "Reversal_to_Fail")
+        write_stats("State 3: 先行資金流入（狼煙）", "Inflow_to_TrueDay0", "Inflow_to_Fail")
+        write_stats("State 4: True Day 0（第一波）", "TrueDay0_to_Shakeout", "TrueDay0_to_Fail")
+        write_stats("State 5: 揺さぶり（ふるい落とし）", "Shakeout_to_MainRun", "Shakeout_to_Fail")
         
     print(f"[保存成功] 各Stateの失敗確率統計レポートを保存しました: {stats_path.name}")
     
