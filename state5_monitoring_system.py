@@ -305,9 +305,11 @@ def main():
                 if latest_row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # 必須判定: State 5 であること
-                if latest_state == 5:
+                # 必須判定: State 1以上（予兆〜本上昇までのいずれか）であればすべてスコアリング対象にする
+                if latest_state >= 1:
                     score, comments = score_and_comment_candidate(latest_row)
+                 # ※注意: テスト実行時、current_stateが5以外のときは score_and_comment_candidate の中で score に
+                 # WEIGHT_STATE5 (20点) は加算されませんが、その他の指標（MA75やRSIなど）で正常に100点満点中何点かが計算されます。
                     
                     candidates.append({
                         "ticker": t,
