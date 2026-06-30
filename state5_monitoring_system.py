@@ -305,8 +305,8 @@ def main():
                 if latest_row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # 必須判定を完全に無効化（無条件で全銘柄をスコアリング対象にする）
-                if True:
+                # 必須判定: State 5 であること
+                if latest_state == 5:
                     score, comments = score_and_comment_candidate(latest_row)
                     
                     candidates.append({
