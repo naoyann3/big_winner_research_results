@@ -45,6 +45,19 @@ jobs:
         run: |
           python signal_lifecycle_tracker.py --universe-csv universe.csv
 
+      # ↓↓↓【ここから合流ステップを追記します】↓↓↓
+      - name: Run State5 Watch Scoring and Notification
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
+        run: |
+          # pyyaml は設定ファイル（config.yaml）を読み込むために必要なので、ここでインストールします
+          python -m pip install pyyaml
+          # 条件に該当する銘柄をスキャンし、毎朝のメール送信を実行
+          python state5_monitoring_system.py || echo "Warning: State5 Watch failed, logged above."
+      # ↑↑↑【追記はここまで】↑↑↑
+
       # 【最重要】更新されたデータをリポジトリへ自動コミット＆自動プッシュ
       - name: Commit and push changes
         run: |
