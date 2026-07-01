@@ -26,27 +26,35 @@ class MarketEnvironmentManager:
     def update_market_indices(cls, tickers: list[str]):
         """
         設定された市場インデックスをダウンロード・更新します。
-        インデックスの型競合（'<' not supported）を完全に回避するため、日付型を徹底統一します。
+        【自己修復(Self-Healing)設計】：
+        既存のCSVファイルが1ミリでも破損・型競合している兆候を検知した場合、
+        自動的に古いファイルを破棄・無視し、5年分のまっさらな新品データを自動構築します。
         """
         cls.PRICES_DIR.mkdir(parents=True, exist_ok=True)
         
         for t in tickers:
             price_path = cls.PRICES_DIR / f"{t}.csv"
             
-            # 【修正点1】：既存データを読み込み、日付型へ強制クレンジング
             is_new = True
             if price_path.exists():
                 try:
                     df_test = pd.read_csv(price_path, index_col=0)
                     df_test.index = pd.to_datetime(df_test.index, errors="coerce")
                     df_test = df_test.dropna(how="all")
-                    if len(df_test) >= 200:
-                        is_new = False
+                    
+                    # 正常に日付順に並び替え（ソート）ができるかを事前テスト
+                    df_test.sort_index()
+                    
+                    # インデックスに無効な値(NaT)が混ざっておらず、且つ200営業日以上のデータがある場合のみマージ
+                    if len(df_test) >= 200 and not df_test.index.isnull().any():
+                        is_new = False  # 正常なファイルと判定
                 except Exception:
-                    pass
+                    # 1ミリでも不整合やエラーが出たら、既存ファイルを「破損」とみなして、強制的に5年分新規取得モードへ
+                    is_new = True
             
-            # 新規なら5年分(5y)、既にデータがあるなら差分(5d)のみ取得
             period = "5y" if is_new else "5d"
+            if is_new:
+                print(f"  [自己修復起動] インデックス {t} の破損を検知したため、5年分を自動再構築します...")
             
             try:
                 data = yf.download(t, period=period, interval="1d", auto_adjust=True, progress=False, threads=False)
@@ -54,11 +62,9 @@ class MarketEnvironmentManager:
                     continue
                     
                 t_data = data[["Open", "High", "Low", "Close", "Volume"]]
-                # yfinance のインデックスも確実に日付型にする
                 t_data.index = pd.to_datetime(t_data.index, errors="coerce")
                 
                 if not is_new and price_path.exists():
-                    # 【修正点2】：既存CSVを読み込み、日付型へ強制統一してからconcat
                     df_existing = pd.read_csv(price_path, index_col=0)
                     df_existing.index = pd.to_datetime(df_existing.index, errors="coerce")
                     df_existing = df_existing.dropna(how="all")
@@ -94,8 +100,6 @@ class MarketEnvironmentManager:
             
         try:
             d = pd.read_csv(main_index_path, index_col=0)
-            
-            # 【修正点3】：ここでも日付型へのクレンジングを徹底
             d.index = pd.to_datetime(d.index, errors="coerce")
             d = d.dropna(how="all").sort_index()
             
@@ -118,7 +122,6 @@ class MarketEnvironmentManager:
             ma25 = float(row["ma25"])
             ma200 = float(row["ma200"])
             
-            # トレンド判定
             if close > ma25 > ma200:
                 state = "Bull"
             elif close < ma25 < ma200:
