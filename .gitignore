@@ -1,0 +1,19 @@
+# Pythonの一時的なキャッシュファイルを無視
+__pycache__/
+*.pyc
+
+# クラウド運用には不要なローカル用の重いフォルダを無視
+.pylibs/
+pylibs2/
+python/
+wheelhouse/
+
+# サムネイルなどの大容量の画像ファイルを無視
+*.png
+*.jpg
+*.jpeg
+
+# 100MBを超える可能性のある過去検証用の超巨大CSVを完全に無視
+big_winner_research_results/
+big_winner_events.csv
+research/research_results/big_winner_dynamics_dataset.csv
