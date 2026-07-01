@@ -289,8 +289,8 @@ def main():
                 if latest_row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # --- 【テスト用】：条件を if True: にして強制的に全銘柄をスコアリング ---
-                if True:
+                # スコアリング
+                if latest_state == 5:
                     score, comments = score_and_comment_candidate(latest_row)
                     
                     candidates.append({
@@ -332,7 +332,7 @@ def main():
             market_env = MarketEnvironmentManager.get_current_environment(latest_date)
             print(f"  [市場環境] TOPIX終値: {market_env['topix_close']:.1f} (地合い: {market_env['market_state_topix']})")
             
-            # 2. 教師データ（履歴）のロギング
+            # 2. 教師データ（履歴）のロギング (※5件制限の優先候補だけでなく、本日検出されたすべてのState 5銘柄を漏れなく保存)
             from state5_history_logger import State5HistoryLogger
             State5HistoryLogger.log_candidates(candidates, latest_date, market_env, config)
             
