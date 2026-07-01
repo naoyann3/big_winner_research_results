@@ -1,0 +1,44 @@
+name: Daily Stock Screener
+
+on:
+  schedule:
+    # 毎日日本時間23:00（世界協定時 UTC 14:00）に自動実行
+    - cron: '0 14 * * *'
+  workflow_dispatch: # 手動実行ボタンも有効化
+
+jobs:
+  run-screener:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-python-version: '3.10'
+
+      # キャッシュフォルダ（data_cache）をGitHubのデータベースに保存。
+      # これにより、毎日一からダウンロードせず「前日のキャッシュの続きから差分マージ」ができます。
+      - name: Cache Stock Data
+        uses: actions/cache@v3
+        with:
+          path: data_cache
+          key: stock-data-${{ github.run_id }}
+          restore-keys: |
+            stock-data-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install yfinance pandas numpy requests
+
+      # 日次スクリーナーの実行（GitHubの秘密のパスワード環境変数を注入）
+      - name: Run Screener
+        env:
+          SPREADSHEET_WEBHOOK_URL: ${{ secrets.SPREADSHEET_WEBHOOK_URL }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
+        run: |
+          python daily_screener.py
