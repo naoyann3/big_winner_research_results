@@ -75,7 +75,10 @@ class MarketEnvironmentManager:
                     
                     # 既存のマルチインデックス破損データがあった場合の安全処理
                     if isinstance(df_existing.columns, pd.MultiIndex):
-                        df_existing = df_existing[t]
+                        try:
+                            df_existing = df_existing[t]
+                        except KeyError:
+                            pass
                     
                     df_existing.index = pd.to_datetime(df_existing.index, errors="coerce")
                     df_existing = df_existing.dropna(how="all")
