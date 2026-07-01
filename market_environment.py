@@ -2,17 +2,33 @@ import pandas as pd
 import yfinance as yf
 from pathlib import Path
 import numpy as np
+import yaml
 
 class MarketEnvironmentManager:
     PRICES_DIR = Path("data_cache/prices")
-    
+    CONFIG_FILE = Path("../config.yaml")  # 1つ上の親フォルダの config.yaml を指す
+
     @classmethod
-    def update_market_indices(cls):
+    def load_config_tickers(cls) -> list[str]:
+        """config.yamlから分析用ティッカーリストを動的に読み込みます"""
+        # Playground直下、または同フォルダにある config.yaml を安全に探索
+        config_path = cls.CONFIG_FILE if cls.CONFIG_FILE.exists() else Path("config.yaml")
+        
+        if config_path.exists():
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    cfg = yaml.safe_load(f)
+                    return cfg.get("research", {}).get("market_tickers", ["1306.T", "^N225"])
+            except Exception:
+                pass
+        return ["1306.T", "^N225"]
+
+    @classmethod
+    def update_market_indices(cls, tickers: list[str]):
         """
-        TOPIX(^TPX)と日経平均(^N225)のデータをダウンロード・更新
+        設定ファイルから読み込まれた市場インデックスをダウンロード・更新
         """
         cls.PRICES_DIR.mkdir(parents=True, exist_ok=True)
-        tickers = ["^TPX", "^N225"]
         try:
             # 最新5日分をダウンロードしてマージ
             data = yf.download(tickers, period="5d", interval="1d", group_by="ticker", auto_adjust=True, progress=False, threads=False)
@@ -40,21 +56,26 @@ class MarketEnvironmentManager:
     @classmethod
     def get_current_environment(cls, date_str: str) -> dict:
         """
-        指定日の市場環境(TOPIX基準のBull/Bearなど)を判定して返します
+        指定日の市場環境(主たるインデックス基準)を判定して返します
         """
-        cls.update_market_indices() # 常に最新の指数をダウンロード
-        topix_path = cls.PRICES_DIR / "^TPX.csv"
+        # config.yaml から動的にリストを取得
+        tickers = cls.load_config_tickers()
+        cls.update_market_indices(tickers)
+        
+        # リストの最初のティッカー（今回は 1306.T）を環境判定用インデックスとする
+        main_index_ticker = tickers[0] if tickers else "1306.T"
+        main_index_path = cls.PRICES_DIR / f"{main_index_ticker}.csv"
         
         default_env = {
             "topix_close": 0.0,
             "market_state_topix": "Neutral"
         }
         
-        if not topix_path.exists():
+        if not main_index_path.exists():
             return default_env
             
         try:
-            d = pd.read_csv(topix_path, index_col=0, parse_dates=True).sort_index()
+            d = pd.read_csv(main_index_path, index_col=0, parse_dates=True).sort_index()
             if len(d) < 200:
                 return default_env
                 
@@ -73,7 +94,7 @@ class MarketEnvironmentManager:
             ma25 = float(row["ma25"])
             ma200 = float(row["ma200"])
             
-            # トレンド状態の数理判定
+            # 判定ロジック
             if close > ma25 > ma200:
                 state = "Bull"
             elif close < ma25 < ma200:
