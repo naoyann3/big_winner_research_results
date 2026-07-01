@@ -6,7 +6,7 @@ import yaml
 
 class MarketEnvironmentManager:
     PRICES_DIR = Path("data_cache/prices")
-    CONFIG_FILE = Path("../config.yaml")  # 1つ上の親フォルダの config.yaml を指す
+    CONFIG_FILE = Path("../config.yaml")  # 1つ上の親フォルダ of config.yaml
 
     @classmethod
     def load_config_tickers(cls) -> list[str]:
@@ -26,9 +26,10 @@ class MarketEnvironmentManager:
     def update_market_indices(cls, tickers: list[str]):
         """
         設定された市場インデックスをダウンロード・更新します。
-        【自己修復(Self-Healing)設計】：
-        既存のCSVファイルが1ミリでも破損・型競合している兆候を検知した場合、
-        自動的に古いファイルを破棄・無視し、5年分のまっさらな新品データを自動構築します。
+        【自己修復(Self-Healing)極限強化設計】：
+        既存のCSVファイルの『中身（Close列などの数値データ）』が1ミリでも破損、
+        またはすべてNaNになっている場合、問答無用でファイルを完全自動破壊し、
+        5年分のまっさらな新品データを自動再構築して強制修復します。
         """
         cls.PRICES_DIR.mkdir(parents=True, exist_ok=True)
         
@@ -42,19 +43,25 @@ class MarketEnvironmentManager:
                     df_test.index = pd.to_datetime(df_test.index, errors="coerce")
                     df_test = df_test.dropna(how="all")
                     
-                    # 正常に日付順に並び替え（ソート）ができるかを事前テスト
+                    # 正常に日付ソートができるかテスト
                     df_test.sort_index()
                     
-                    # インデックスに無効な値(NaT)が混ざっておらず、且つ200営業日以上のデータがある場合のみマージ
-                    if len(df_test) >= 200 and not df_test.index.isnull().any():
-                        is_new = False  # 正常なファイルと判定
+                    # 【極限強化】：Close（株価）列が存在し、且つ値がすべてNaNになっておらず、
+                    # 且つデータが200行以上ある場合のみ、正常ファイルとしてマージ
+                    if (
+                        len(df_test) >= 200 
+                        and "Close" in df_test.columns 
+                        and not df_test["Close"].isna().all() 
+                        and not df_test.index.isnull().any()
+                    ):
+                        is_new = False  # 完全に正常なファイルと判定
                 except Exception:
-                    # 1ミリでも不整合やエラーが出たら、既存ファイルを「破損」とみなして、強制的に5年分新規取得モードへ
                     is_new = True
             
+            # 新規なら5年分(5y)、既にデータがあるなら差分(5d)のみ取得
             period = "5y" if is_new else "5d"
             if is_new:
-                print(f"  [自己修復起動] インデックス {t} の破損を検知したため、5年分を自動再構築します...")
+                print(f"  [自己修復起動] インデックス {t} の中身の破損・空データを検知したため、5年分を自動再構築します...")
             
             try:
                 data = yf.download(t, period=period, interval="1d", auto_adjust=True, progress=False, threads=False)
@@ -122,6 +129,7 @@ class MarketEnvironmentManager:
             ma25 = float(row["ma25"])
             ma200 = float(row["ma200"])
             
+            # トレンド判定
             if close > ma25 > ma200:
                 state = "Bull"
             elif close < ma25 < ma200:
@@ -135,5 +143,7 @@ class MarketEnvironmentManager:
                 "topix_close": close,
                 "market_state_topix": state
             }
-        except Exception:
+        except Exception as e:
+            # 万が一不測のエラーが起きた場合は、画面にエラー名を表示します
+            print(f"  [デバッグ警告] 地合い判定中に不測のエラーが発生しました: {e}")
             return default_env
