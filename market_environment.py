@@ -26,8 +26,8 @@ class MarketEnvironmentManager:
     def update_market_indices(cls, tickers: list[str]):
         """
         設定された市場インデックスをダウンロード・更新します。
-        yfinanceのマルチインデックス(2行ヘッダー)を完全に解体し、
-        エラー（No numeric types to aggregate）を100%根本から消滅させます。
+        KeryError: '1306.T' などのマルチインデックス階層エラーを100%根本から消滅させ、
+        自動で1行のフラットヘッダーに変換します。
         """
         cls.PRICES_DIR.mkdir(parents=True, exist_ok=True)
         
@@ -38,6 +38,11 @@ class MarketEnvironmentManager:
             if price_path.exists():
                 try:
                     df_test = pd.read_csv(price_path, index_col=0)
+                    
+                    # 既存のマルチインデックス破損データがあった場合の安全処理
+                    if isinstance(df_test.columns, pd.MultiIndex):
+                        df_test.columns = df_test.columns.get_level_values(0)
+                        
                     df_test.index = pd.to_datetime(df_test.index, errors="coerce")
                     df_test = df_test.dropna(how="all")
                     df_test.sort_index()
@@ -52,6 +57,7 @@ class MarketEnvironmentManager:
                 except Exception:
                     is_new = True
             
+            # 新規なら5年分(5y)、既にデータがあるなら差分(5d)のみ取得
             period = "5y" if is_new else "5d"
             if is_new:
                 print(f"  [自己修復起動] インデックス {t} の破損・空データを検知したため、5年分を自動再構築します...")
@@ -61,12 +67,11 @@ class MarketEnvironmentManager:
                 if data.empty:
                     continue
                 
-                # 【修正点1】：yfinanceのマルチインデックス（2行ヘッダー）を完全に解体・平坦化
+                # 【修正点1】：2行ヘッダーのマルチインデックスの「2行目（ティッカー名）」を完全に剥ぎ取って1行に平坦化
                 if isinstance(data.columns, pd.MultiIndex):
-                    t_data = data[t].dropna()
-                else:
-                    t_data = data.dropna()
+                    data.columns = data.columns.get_level_values(0)
                     
+                t_data = data.dropna()
                 t_data = t_data[["Open", "High", "Low", "Close", "Volume"]]
                 t_data.index = pd.to_datetime(t_data.index, errors="coerce")
                 
@@ -75,10 +80,7 @@ class MarketEnvironmentManager:
                     
                     # 既存のマルチインデックス破損データがあった場合の安全処理
                     if isinstance(df_existing.columns, pd.MultiIndex):
-                        try:
-                            df_existing = df_existing[t]
-                        except KeyError:
-                            pass
+                        df_existing.columns = df_existing.columns.get_level_values(0)
                     
                     df_existing.index = pd.to_datetime(df_existing.index, errors="coerce")
                     df_existing = df_existing.dropna(how="all")
@@ -117,12 +119,12 @@ class MarketEnvironmentManager:
             
             # 【修正点2】：既存のマルチインデックス破損データへの防衛策
             if isinstance(d.columns, pd.MultiIndex):
-                d = d[main_index_ticker]
+                d.columns = d.columns.get_level_values(0)
                 
             d.index = pd.to_datetime(d.index, errors="coerce")
             d = d.dropna(how="all").sort_index()
             
-            # 【修正点3】：全列を強制的に「数値型(float)」にキャスト（不純物を排除）
+            # 全列を強制的に「数値型(float)」にキャスト（不純物を排除）
             for col in ["Open", "High", "Low", "Close", "Volume"]:
                 if col in d.columns:
                     d[col] = pd.to_numeric(d[col], errors="coerce")
