@@ -4,7 +4,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
 from pathlib import Path
-import yaml  # PyYAMLライブラリを使用
+import yaml
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -20,7 +20,7 @@ def load_config() -> dict:
 
 config = load_config()
 
-# 環境変数を優先しつつ、config.yaml からフォールバックを取得
+# 環境変数
 GMAIL_USER = os.environ.get("GMAIL_USER") or config.get("email", {}).get("gmail_user")
 GMAIL_PASS = os.environ.get("GMAIL_APP_PASSWORD") or config.get("email", {}).get("gmail_pass")
 NOTIFICATION_EMAIL = os.environ.get("NOTIFICATION_EMAIL") or config.get("email", {}).get("notification_email")
@@ -61,9 +61,6 @@ def normalize_ticker(raw: str) -> str:
 
 
 class MarketStateEngine:
-    """
-    State 5判定のための簡易型テクニカル・状態遷移計算クラス
-    """
     @staticmethod
     def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
         d = df.copy()
@@ -71,30 +68,34 @@ class MarketStateEngine:
         d["ma75"] = d["Close"].rolling(75).mean()
         d["ma200"] = d["Close"].rolling(200).mean()
         
-        # 傾き・乖離
         d["ma25_slope"] = d["ma25"].pct_change(5) * 100
         d["ma75_slope"] = d["ma75"].pct_change(5) * 100
         d["ma75_dev"] = (d["Close"] - d["ma75"]) / d["ma75"] * 100
         
-        # 出来高比率
         d["vol_avg20"] = d["Volume"].rolling(20).mean()
         d["vol_ratio_20"] = d["Volume"] / d["vol_avg20"]
         d["turnover_avg20_million"] = ((d["Close"] * d["Volume"]) / 1_000_000).rolling(20).mean()
         
-        # ボラティリティ
         std20 = d["Close"].rolling(20).std()
         d["bb_width"] = (std20 * 4) / d["ma25"] * 100
         d["bb_width_min60"] = d["bb_width"].rolling(60).min()
         
-        # RSI
+        # ATR比率
+        high_low = d["High"] - d["Low"]
+        high_cp = (d["High"] - d["Close"].shift(1)).abs()
+        low_cp = (d["Low"] - d["Close"].shift(1)).abs()
+        tr = pd.concat([high_low, high_cp, low_cp], axis=1).max(axis=1)
+        d["atr_ratio"] = (tr.rolling(14).mean() / d["Close"]) * 100
+        
         delta = d["Close"].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
         d["rsi14"] = 100 - (100 / (1 + (gain / np.where(loss > 0, loss, 1.0))))
         
-        # 52週高値
         d["high_52w"] = d["High"].rolling(250, min_periods=50).max()
+        d["low_52w"] = d["Low"].rolling(250, min_periods=50).min()
         d["dist_to_52w_high"] = (d["Close"] - d["high_52w"]) / d["high_52w"] * 100
+        d["dist_to_52w_low"] = (d["Close"] - d["low_52w"]) / d["low_52w"] * 100
         d["high_20d"] = d["High"].shift(1).rolling(20).max()
 
         return d
@@ -161,46 +162,37 @@ class MarketStateEngine:
 
 
 def score_and_comment_candidate(latest_row: pd.Series) -> tuple[int, list[str]]:
-    """
-    客観的なデータに基づき、100点満点でのスコアリングと定型コメントを自動生成します
-    """
     score = 0
     comments = []
     
-    # 1. State 5 判定 (20点)
     if int(latest_row["current_state"]) == 5:
         score += WEIGHT_STATE5
     
-    # 2. MA75近接 (20点)
     ma75_dev = latest_row["ma75_dev"]
     if abs(ma75_dev) <= TH_MA75_DEV:
         score += WEIGHT_MA75
         comments.append("MA75支持確認")
     
-    # 3. 出来高収縮 (20点)
     vol_ratio = latest_row["vol_ratio_20"]
     if vol_ratio <= TH_VOL_LIMIT:
         score += WEIGHT_VOL_SHRINK
         comments.append("出来高収縮継続")
     
-    # 4. BB収縮 (15点)
     bb_width = latest_row["bb_width"]
     if bb_width <= TH_BB_LIMIT:
         score += WEIGHT_BB_SHRINK
         comments.append("ボラティリティ低下")
     
-    # 5. RSI適正 (10点)
     rsi14 = latest_row["rsi14"]
     if TH_RSI_MIN <= rsi14 <= TH_RSI_MAX:
         score += WEIGHT_RSI
+        comments.append("RSI適正")
     
-    # 6. 52週高値との距離 (10点)
     dist_52w = latest_row["dist_to_52w_high"]
     if abs(dist_52w) <= 20.0:
         score += WEIGHT_DIST_52W
         comments.append(f"52週高値まで {abs(dist_52w):.1f}%")
     
-    # 7. パーフェクトオーダー維持 (5点)
     ma25 = latest_row["ma25"]
     ma75 = latest_row["ma75"]
     ma200 = latest_row["ma200"]
@@ -208,11 +200,9 @@ def score_and_comment_candidate(latest_row: pd.Series) -> tuple[int, list[str]]:
         score += WEIGHT_PO
         comments.append("上昇パーフェクトオーダー維持")
         
-    # 長期線（MA200）上確認コメント
     if latest_row["Close"] > ma200:
         comments.append("長期移動平均線上")
         
-    # 出来高の需給改善中コメント（前日差がマイナス、つまり売り枯れがさらに深まっている場合）
     if latest_row["Volume"] < latest_row["vol_avg20"] * 0.5:
         comments.append("需給改善中")
 
@@ -220,9 +210,6 @@ def score_and_comment_candidate(latest_row: pd.Series) -> tuple[int, list[str]]:
 
 
 def notify_state5_watch(candidates: list[dict], date_str: str):
-    """
-    毎朝一通、客観的なデータに基づき、きれいに整形されたMarkdown形式でメールを送信します
-    """
     if not candidates:
         print("本日のState 5優先候補は0件です。通知をスキップします。")
         return
@@ -290,23 +277,20 @@ def main():
                 if len(df_raw) < 150:
                     continue
 
-                # 状態判定
                 df_ind = MarketStateEngine.calculate_indicators(df_raw)
                 df_sim = MarketStateEngine.simulate_state_machine(df_ind)
                 
                 latest_row = df_sim.iloc[-1]
                 latest_state = int(latest_row["current_state"])
                 
-                # 毎朝のスキャン日時の取得
                 if latest_date is None:
                     latest_date = df_sim.index[-1].strftime("%Y-%m-%d")
 
-                # 最低流動性（売買代金）チェック
                 if latest_row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # 必須判定: State 5 であること
-                if True:  # 👈 ★このように書き換えます
+                # --- 【テスト用】：条件を if True: にして強制的に全銘柄をスコアリング ---
+                if True:
                     score, comments = score_and_comment_candidate(latest_row)
                     
                     candidates.append({
@@ -315,11 +299,17 @@ def main():
                         "score": score,
                         "state": latest_state,
                         "days_in_state": int(latest_row["state_days"]),
+                        "close": float(latest_row["Close"]),
                         "ma75_dev": latest_row["ma75_dev"],
                         "rsi14": latest_row["rsi14"],
                         "bb_width": latest_row["bb_width"],
                         "vol_ratio": latest_row["vol_ratio_20"],
-                        "comments": comments
+                        "comments": comments,
+                        # 教師データ用の追加テクニカル特徴量
+                        "dist_to_52w_high": latest_row["dist_to_52w_high"],
+                        "dist_to_52w_low": latest_row["dist_to_52w_low"],
+                        "ma25_slope": latest_row["ma25_slope"],
+                        "atr_ratio": latest_row["atr_ratio"]
                     })
             except Exception:
                 continue
@@ -330,9 +320,36 @@ def main():
 
         # 毎朝のメール送信
         notify_state5_watch(priority_candidates, latest_date)
+        
+        # ==========================================
+        # ★【Version 7 新設】：自律学習・成績管理システムの自動フック ★
+        # ==========================================
+        try:
+            print("\n=== Version 7: 研究データ収集・成績管理システムを自動起動します ===")
+            
+            # 1. 市場環境（地合い）の自動判定
+            from market_environment import MarketEnvironmentManager
+            market_env = MarketEnvironmentManager.get_current_environment(latest_date)
+            print(f"  [市場環境] TOPIX終値: {market_env['topix_close']:.1f} (地合い: {market_env['market_state_topix']})")
+            
+            # 2. 教師データ（履歴）のロギング
+            from state5_history_logger import State5HistoryLogger
+            State5HistoryLogger.log_candidates(candidates, latest_date, market_env, config)
+            
+            # 3. 過去シグナルの成績自動追跡（採点）
+            from performance_tracker import PerformanceTracker
+            PerformanceTracker.track_and_score_history(config)
+            
+            # 4. 実績評価レポート（Champion Report）の自動生成
+            from champion_report import ChampionReportGenerator
+            ChampionReportGenerator.generate_report(config)
+            
+            print("=== Version 7: すべての研究データ更新・成績管理処理が正常に完了しました ===")
+            
+        except Exception as e:
+            print(f"【エラーログ】Version 7 モジュール実行中に例外が発生しました: {e}")
 
     except Exception as e:
-        # 設計思想に基づき、エラー発生時はログにのみ書き出し、終了します（メール送信はスキップ）
         print(f"【エラーログ】監視システム稼働中に致命的な例外が発生しました: {e}")
 
 
