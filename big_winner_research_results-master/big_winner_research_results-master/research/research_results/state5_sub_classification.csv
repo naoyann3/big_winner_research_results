@@ -1,4 +1,0 @@
-﻿Cluster_ID,Sample_Count,Win_Rate_60d_pct,Avg_Return_60d_pct,Avg_Max_Drawdown_pct,Median_Volume_Ratio,Median_RSI,Median_ATR_Ratio,Median_BB_Width,Median_MA25_Slope
-Type 0,8046,56.28,2.7,-10.03,0.66,55.0,1.76,7.03,0.46
-Type 1,4406,49.27,2.81,-13.24,0.78,73.5,3.28,22.26,2.84
-Type 2,1,0.0,-35.32,-1.18,0.29,45.5,0.43,1964294760258076.2,-0.1
