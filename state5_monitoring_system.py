@@ -306,7 +306,7 @@ def main():
                     continue
 
                 # 必須判定: State 5 であること
-                if latest_state == 5:
+                if True:  # 👈 ★このように書き換えます
                     score, comments = score_and_comment_candidate(latest_row)
                     
                     candidates.append({
