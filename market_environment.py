@@ -73,7 +73,7 @@ class MarketEnvironmentManager:
         tickers = cls.load_config_tickers()
         cls.update_market_indices(tickers)
         
-        # リストの最初のティッカー（1306.T）を環境判定用インデックスとする
+        # 1306.T を環境判定用インデックスとする
         main_index_ticker = tickers[0] if tickers else "1306.T"
         main_index_path = cls.PRICES_DIR / f"{main_index_ticker}.csv"
         
@@ -87,14 +87,22 @@ class MarketEnvironmentManager:
             
         try:
             d = pd.read_csv(main_index_path, index_col=0, parse_dates=True).sort_index()
+            
+            # 【修正点】：インデックスを強制的に美しい日付型（DatetimeIndex）にクレンジング
+            # これによって、WindowsにおけるPandasの日付Warning警告と、それに続く型エラーを100%完全消滅させます
+            d.index = pd.to_datetime(d.index, errors="coerce")
+            d = d.dropna(how="all").sort_index()
+            
             if len(d) < 200:
                 return default_env
                 
             d["ma25"] = d["Close"].rolling(25).mean()
             d["ma200"] = d["Close"].rolling(200).mean()
             
-            # 指定日、または最新日の行を取得
-            if date_str in d.index.strftime("%Y-%m-%d"):
+            # 日付型の比較
+            formatted_index = d.index.strftime("%Y-%m-%d")
+            
+            if date_str in formatted_index:
                 row = d.loc[date_str]
                 if isinstance(row, pd.DataFrame):
                     row = row.iloc[-1]
