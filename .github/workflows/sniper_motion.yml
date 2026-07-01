@@ -73,6 +73,13 @@ jobs:
           if [ -f "signal_performance_report.csv" ]; then
             git add signal_performance_report.csv
           fi
+
+          # ↓↓↓【ここから追記します】↓↓↓
+          # 新設された研究データフォルダ research_results があれば丸ごと自動保存
+          if [ -d "research_results" ]; then
+            git add research_results/
+          fi
+          # ↑↑↑【追記はここまで】↑↑↑
           
           # 何かしらの変更があればコミットしてプッシュ
           if ! git diff --cached --quiet; then
