@@ -1,10 +1,10 @@
-# Sniper OS Version 6.1 - Configuration File
+# Sniper OS Version 7 - Configuration File
 
 # メール通知設定
 email:
-  gmail_user: "GMAIL_USER"             # 基本的にはGitHub Secrets環境変数が優先されます
-  gmail_pass: "GMAIL_APP_PASSWORD"     # 同上
-  notification_email: "NOTIFICATION_EMAIL" # 同上
+  gmail_user: "GMAIL_USER"
+  gmail_pass: "GMAIL_APP_PASSWORD"
+  notification_email: "NOTIFICATION_EMAIL"
   sender_name: "Sniper OS - State5 Watch"
 
 # スクリーニングの基本閾値
@@ -18,15 +18,21 @@ thresholds:
 
 # スコアイベントの配点ウェイト（合計100点）
 scoring_weights:
-  state5: 20            # 現在の状態が State 5（押し目・揺さぶり）であること (必須)
+  state5: 20            # 現在の状態が State 5 であること
   ma75_dev: 20          # 終値が 75日移動平均線 の±3%以内に近接していること
   vol_shrink: 20        # 出来高が 20日平均比 で 0.70倍以下に収縮（売り枯れ）していること
-  bb_shrink: 15         # ボリンジャーバンド幅が 10%以下に収縮（スクイーズ）していること
+  bb_shrink: 15         # ボリンジャーバンド幅が 10%以下に収縮していること
   rsi: 10               # RSI（14）が 40〜60 の中立適正圏内にあること
-  dist_to_52w_high: 10  # 52週高値から適度に押し戻されており、下げすぎていないこと（高値から20%以内）
-  perfect_order: 5      # 上昇のパーフェクトオーダー（MA25 > MA75 > MA200）が維持されていること
+  dist_to_52w_high: 10  # 52週高値から下落20%以内であること
+  perfect_order: 5      # 上昇のパーフェクトオーダー（MA25 > MA75 > MA200）
 
 # 運用設定
 notification:
-  priority_count: 5          # 毎朝メールで通知する上位の優先銘柄数
-  display_name: "Gold Watch" # "Priority A" / "Elite Watch" / "Gold Watch" / "State5 Premium"
+  priority_count: 5
+  display_name: "Gold Watch"
+
+# --- 【Version 7 新設：研究分析用の設定】 ---
+research:
+  history_file: "research_results/state5_history.csv"
+  report_file: "research_results/champion_report.md"
+  market_tickers: ["1306.T", "^N225"]  # 👈 これで確実にデータが降ってきます
