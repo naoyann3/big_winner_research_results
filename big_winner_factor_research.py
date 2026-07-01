@@ -4,6 +4,9 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+import json
+import time
+import random
 
 import numpy as np
 import pandas as pd
@@ -24,8 +27,8 @@ class ResearchConfig:
     theme_top_industry_count: int = 12
     fetch_timeout_sec: int = 20
     max_tickers: int | None = None
-    # --- 新規追加パラメータ ---
     min_daily_turnover_million: float = 10.0  # 過去20日平均の1日あたり最低売買代金（百万円）
+    cache_dir: Path = Path("data_cache")     # データキャッシュ保存先
 
 
 def normalize_ticker(raw: str) -> str:
@@ -64,30 +67,6 @@ def load_universe(path: Path, max_tickers: int | None = None) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def fetch_history(ticker: str, years: int) -> pd.DataFrame | None:
-    period_days = max(365 * years + 120, 365)
-    period = f"{period_days}d"
-    try:
-        hist = yf.Ticker(ticker).history(period=period, interval="1d", auto_adjust=True)
-    except Exception:
-        return None
-
-    if hist is None or hist.empty:
-        return None
-
-    if isinstance(hist.columns, pd.MultiIndex):
-        hist.columns = hist.columns.get_level_values(0)
-
-    need_cols = ["Open", "High", "Low", "Close", "Volume"]
-    if any(col not in hist.columns for col in need_cols):
-        return None
-
-    hist = hist[need_cols].dropna().copy()
-    if len(hist) < 220:
-        return None
-    return hist
-
-
 def fetch_fundamentals(ticker: str) -> dict | None:
     try:
         info = yf.Ticker(ticker).info
@@ -112,6 +91,78 @@ def fetch_fundamentals(ticker: str) -> dict | None:
         "sector": sector,
         "industry": industry,
     }
+
+
+def download_databank(universe: pd.DataFrame, config: ResearchConfig):
+    """
+    全銘柄の株価履歴とファンダメンタルズ情報をローカルにダウンロードして保存します。
+    """
+    cache_dir = config.cache_dir
+    prices_dir = cache_dir / "prices"
+    fund_dir = cache_dir / "fundamentals"
+    
+    prices_dir.mkdir(parents=True, exist_ok=True)
+    fund_dir.mkdir(parents=True, exist_ok=True)
+    
+    tickers = universe["ticker"].tolist()
+    
+    print("\n--- 1. 株価履歴の一括ダウンロードを開始します ---")
+    period_days = max(365 * config.years + 120, 365)
+    period = f"{period_days}d"
+    
+    batch_size = 300
+    for i in range(0, len(tickers), batch_size):
+        batch = tickers[i : i + batch_size]
+        print(f"株価バッチ取得中: {i+1}〜{min(i+batch_size, len(tickers))} / {len(tickers)}")
+        
+        try:
+            data = yf.download(batch, period=period, interval="1d", group_by="ticker", auto_adjust=True, progress=False, threads=False)
+            
+            for t in batch:
+                price_path = prices_dir / f"{t}.csv"
+                try:
+                    if isinstance(data.columns, pd.MultiIndex):
+                        t_data = data[t].dropna()
+                    else:
+                        t_data = data.dropna()
+                        
+                    if t_data.empty:
+                        continue
+                        
+                    t_data = t_data[["Open", "High", "Low", "Close", "Volume"]]
+                    
+                    if not price_path.exists():
+                        df_combined = t_data.sort_index()
+                    else:
+                        df_existing = pd.read_csv(price_path, index_col=0, parse_dates=True)
+                        df_combined = pd.concat([df_existing, t_data])
+                        df_combined = df_combined[~df_combined.index.duplicated(keep="last")].sort_index()
+                        
+                    df_combined.to_csv(price_path, index=True, encoding="utf-8-sig")
+                except Exception:
+                    continue
+        except Exception as e:
+            print(f"  -> バッチ取得エラー: {e}")
+            continue
+                
+    print("\n--- 2. ファンダメンタルズ情報のダウンロードを開始します ---")
+    for idx, ticker in enumerate(tickers):
+        cache_path = fund_dir / f"{ticker}.json"
+        
+        if cache_path.exists():
+            continue
+            
+        print(f"[{idx+1}/{len(tickers)}] 取得中: {ticker}")
+        
+        fundamentals = run_with_timeout(fetch_fundamentals, config.fetch_timeout_sec, ticker)
+        if fundamentals is not None:
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(fundamentals, f, ensure_ascii=False, indent=4)
+            time.sleep(random.uniform(1.5, 3.0))
+        else:
+            print(f"  -> {ticker} の財務データ取得に失敗（スクレイピング制限回避のためスキップ）")
+
+    print("\nデータバンクの構築処理がすべて完了しました。")
 
 
 def price_return_pct(hist: pd.DataFrame, lookback: int) -> float | None:
@@ -223,12 +274,9 @@ def calc_features(df: pd.DataFrame, config: ResearchConfig) -> pd.DataFrame:
     d["vol_avg20"] = d["Volume"].rolling(20).mean()
     d["volume_ratio_20"] = d["Volume"] / d["vol_avg20"]
     
-    # 1日の売買代金（百万円）の算出
     d["turnover_million"] = (d["Close"] * d["Volume"]) / 1_000_000
-    # 過去20日間の平均1日あたり売買代金の算出
     d["turnover_avg20_million"] = d["turnover_million"].rolling(20).mean()
     
-    # 【再現性向上】流動性フィルター（物理的な足切り）の判定
     d["liquidity_ok"] = d["turnover_avg20_million"] >= config.min_daily_turnover_million
 
     d["return_63d_pct"] = (d["Close"] - d["Close"].shift(63)) / d["Close"].shift(63) * 100
@@ -248,7 +296,6 @@ def calc_features(df: pd.DataFrame, config: ResearchConfig) -> pd.DataFrame:
 
     d["perfect_order"] = (d["Close"] > d["ma25"]) & (d["ma25"] > d["ma75"]) & (d["ma75"] > d["ma200"])
     
-    # 全ての既存シグナルに対しても、売買代金による流動性OK（liquidity_ok）を条件に噛み合わせる
     d["trend_building"] = (d["ma25"] > d["ma75"]) & (d["ma75"] > d["ma200"]) & (d["ma75_slope_pct"] > 0) & d["liquidity_ok"]
     d["breakout_52w"] = (d["Close"] >= d["recent_high_52w"] * 0.98) & d["liquidity_ok"]
     d["breakout_confirmed"] = d["breakout_52w"] & (d["volume_ratio_20"] >= 1.5)
@@ -278,7 +325,7 @@ def calc_features(df: pd.DataFrame, config: ResearchConfig) -> pd.DataFrame:
     )
     d["is_positive_candle"] = d["Close"] > d["Open"]
 
-    # 5. 「初動スナイパー(sniper_breakout)」シグナルの統合（流動性okを必須化）
+    # 5. 「初動スナイパー(sniper_breakout)」シグナルの統合
     d["sniper_breakout"] = (
         d["ma_squeeze_20d"] &
         d["dry_up"] &
@@ -286,7 +333,7 @@ def calc_features(df: pd.DataFrame, config: ResearchConfig) -> pd.DataFrame:
         (d["volume_ratio_20"] >= 1.5) &
         d["candle_mid_high"] &
         d["is_positive_candle"] &
-        d["liquidity_ok"]              # 流動性の担保
+        d["liquidity_ok"]
     )
 
     d["trend_building_entry"] = d["trend_building"] & ~d["trend_building"].shift(1).fillna(False)
@@ -306,21 +353,36 @@ def future_max_return(close: pd.Series, start_idx: int, forward_days: int) -> fl
     return (future_max - entry) / entry * 100.0
 
 
-def find_events(hist: pd.DataFrame, fundamentals: dict, theme_context: dict, config: ResearchConfig) -> pd.DataFrame:
+# --- 新規追加：未来の最大下落率を算出する関数 ---
+def future_min_return(close: pd.Series, start_idx: int, forward_days: int) -> float | None:
+    end_idx = min(start_idx + forward_days, len(close) - 1)
+    if start_idx >= end_idx:
+        return None
+    future_min = float(close.iloc[start_idx + 1 : end_idx + 1].min())
+    entry = float(close.iloc[start_idx])
+    return (future_min - entry) / entry * 100.0
+
+
+def find_events(hist: pd.DataFrame, fundamentals: dict | None, theme_context: dict, config: ResearchConfig) -> pd.DataFrame:
     features = calc_features(hist, config)
     rows = []
-    theme_tailwind = (
-        fundamentals.get("sector") in theme_context.get("top_sectors", set())
-        or fundamentals.get("industry") in theme_context.get("top_industries", set())
-    )
-    fundamental_support = (
-        fundamentals.get("revenue_growth_pct") is not None
-        and fundamentals.get("profit_margin_pct") is not None
-        and fundamentals.get("roe_pct") is not None
-        and fundamentals.get("revenue_growth_pct") >= config.min_revenue_growth_pct
-        and fundamentals.get("profit_margin_pct") >= config.min_profit_margin_pct
-        and fundamentals.get("roe_pct") >= config.min_roe_pct
-    )
+    
+    if fundamentals is None:
+        theme_tailwind = False
+        fundamental_support = False
+    else:
+        theme_tailwind = (
+            fundamentals.get("sector") in theme_context.get("top_sectors", set())
+            or fundamentals.get("industry") in theme_context.get("top_industries", set())
+        )
+        fundamental_support = (
+            fundamentals.get("revenue_growth_pct") is not None
+            and fundamentals.get("profit_margin_pct") is not None
+            and fundamentals.get("roe_pct") is not None
+            and fundamentals.get("revenue_growth_pct") >= config.min_revenue_growth_pct
+            and fundamentals.get("profit_margin_pct") >= config.min_profit_margin_pct
+            and fundamentals.get("roe_pct") >= config.min_roe_pct
+        )
 
     for idx in range(len(features)):
         row = features.iloc[idx]
@@ -336,8 +398,11 @@ def find_events(hist: pd.DataFrame, fundamentals: dict, theme_context: dict, con
             if not entry_flag:
                 continue
 
-            fwd = future_max_return(features["Close"], idx, config.forward_days)
-            if fwd is None:
+            fwd_max = future_max_return(features["Close"], idx, config.forward_days)
+            # --- 新規：最大下落率の計算 ---
+            fwd_min = future_min_return(features["Close"], idx, config.forward_days)
+            
+            if fwd_max is None or fwd_min is None:
                 continue
 
             rows.append(
@@ -370,8 +435,10 @@ def find_events(hist: pd.DataFrame, fundamentals: dict, theme_context: dict, con
                     "dry_up": bool(row.get("dry_up", False)),
                     "breakout_20d": bool(row.get("breakout_20d", False)),
                     "candle_mid_high": bool(row.get("candle_mid_high", False)),
-                    "future_max_return_pct": fwd,
-                    "big_winner": fwd >= config.big_winner_threshold_pct,
+                    # 期待値計算の変数を出力にセット
+                    "future_max_return_pct": fwd_max,
+                    "future_min_return_pct": fwd_min, # 新規追加
+                    "big_winner": fwd_max >= config.big_winner_threshold_pct,
                 }
             )
 
@@ -392,13 +459,16 @@ def summarize_events(events: pd.DataFrame) -> pd.DataFrame:
                 "big_winner_rate": float(grp["big_winner"].mean()),
                 "avg_future_max_return_pct": float(grp["future_max_return_pct"].mean()),
                 "median_future_max_return_pct": float(grp["future_max_return_pct"].median()),
+                # --- 新規：最大下落率の集計 ---
+                "avg_future_min_return_pct": float(grp["future_min_return_pct"].mean()),
+                "median_future_min_return_pct": float(grp["future_min_return_pct"].median()),
+                # -----------------------------
                 "avg_volume_ratio_20": float(grp["signal_volume_ratio_20"].mean()),
                 "avg_congestion_width_pct": float(grp["ma_congestion_width_pct"].mean()),
                 "avg_close_vs_52w_high_pct": float(grp["close_vs_52w_high_pct"].mean()),
             }
         )
         
-    # 【外れ値対策】評価ソート順を「中央値」の高い順に変更
     summary = pd.DataFrame(rows).sort_values(["median_future_max_return_pct", "big_winner_rate"], ascending=[False, False]).reset_index(drop=True)
 
     extra_rows = []
@@ -418,6 +488,10 @@ def summarize_events(events: pd.DataFrame) -> pd.DataFrame:
                 "big_winner_rate": float(grp["big_winner"].mean()),
                 "avg_future_max_return_pct": float(grp["future_max_return_pct"].mean()),
                 "median_future_max_return_pct": float(grp["future_max_return_pct"].median()),
+                # --- 新規：最大下落率の集計 ---
+                "avg_future_min_return_pct": float(grp["future_min_return_pct"].mean()),
+                "median_future_min_return_pct": float(grp["future_min_return_pct"].median()),
+                # -----------------------------
                 "avg_volume_ratio_20": float(grp["signal_volume_ratio_20"].mean()),
                 "avg_congestion_width_pct": float(grp["ma_congestion_width_pct"].mean()),
                 "avg_close_vs_52w_high_pct": float(grp["close_vs_52w_high_pct"].mean()),
@@ -425,7 +499,6 @@ def summarize_events(events: pd.DataFrame) -> pd.DataFrame:
         )
 
     if extra_rows:
-        # こちらの追加サマリー部分も中央値でソート
         extra_df = pd.DataFrame(extra_rows).sort_values(["median_future_max_return_pct", "big_winner_rate"], ascending=[False, False]).reset_index(drop=True)
         summary = pd.concat([summary, extra_df], ignore_index=True)
 
@@ -441,9 +514,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--big-winner-threshold-pct", type=float, default=100.0)
     parser.add_argument("--fetch-timeout-sec", type=int, default=20)
     parser.add_argument("--max-tickers", type=int, default=None)
-    # --- 新規コマンドライン引数 ---
     parser.add_argument("--min-turnover-million", type=float, default=10.0,
                         help="Minimum 20-day average daily turnover in million JPY (default: 10.0)")
+    parser.add_argument("--mode", type=str, choices=["download", "research", "all"], default="research",
+                        help="Execution mode: 'download' (fetch & save data), 'research' (run simulation offline), 'all' (both)")
+    parser.add_argument("--cache-dir", type=Path, default=Path("data_cache"),
+                        help="Directory to store historical/fundamental caches")
     return parser
 
 
@@ -455,46 +531,77 @@ def main() -> None:
         big_winner_threshold_pct=args.big_winner_threshold_pct,
         fetch_timeout_sec=args.fetch_timeout_sec,
         max_tickers=args.max_tickers,
-        min_daily_turnover_million=args.min_turnover_million, # ユーザー指定を反映
+        min_daily_turnover_million=args.min_turnover_million,
+        cache_dir=args.cache_dir,
     )
 
     universe = load_universe(args.universe_csv, config.max_tickers)
+    
+    # 1. ダウンロードモード (または all) の実行
+    if args.mode in ["download", "all"]:
+        download_databank(universe, config)
+        if args.mode == "download":
+            return 
+
+    # 2. リサーチモード (または all) の実行 (完全ローカル処理)
+    print("\n--- ローカルデータバンクを用いた超高速検証を開始します ---")
     args.output_dir.mkdir(parents=True, exist_ok=True)
-
+    
     records: list[dict] = []
+    prices_dir = config.cache_dir / "prices"
+    fund_dir = config.cache_dir / "fundamentals"
 
+    print("\nキャッシュファイルの読み込みを開始します...")
     for i, row in universe.iterrows():
         ticker = row["ticker"]
         name = row.get("name", ticker)
-        print(f"{i + 1}/{len(universe)} {ticker}")
-
-        hist = run_with_timeout(fetch_history, config.fetch_timeout_sec, ticker, config.years)
-        if hist is None:
-            records.append({"ticker": ticker, "name": name, "hist": None, "fundamentals": None, "status": "no_history"})
+        
+        # 100件ごとに進捗を画面に出力
+        if (i + 1) % 100 == 0 or (i + 1) == len(universe):
+            print(f"  [ロード中] {i+1} / {len(universe)} 銘柄...")
+        
+        price_path = prices_dir / f"{ticker}.csv"
+        fund_path = fund_dir / f"{ticker}.json"
+        
+        if not price_path.exists():
+            continue
+            
+        try:
+            hist = pd.read_csv(price_path, index_col=0, parse_dates=True)
+            
+            fundamentals = None
+            status_str = "no_fundamentals"
+            if fund_path.exists():
+                try:
+                    with open(fund_path, "r", encoding="utf-8") as f:
+                        fundamentals = json.load(f)
+                    status_str = "ok"
+                except Exception:
+                    pass
+            
+            records.append({"ticker": ticker, "name": name, "hist": hist, "fundamentals": fundamentals, "status": status_str})
+        except Exception:
             continue
 
-        fundamentals = run_with_timeout(fetch_fundamentals, config.fetch_timeout_sec, ticker)
-        if fundamentals is None:
-            records.append({"ticker": ticker, "name": name, "hist": hist, "fundamentals": None, "status": "no_fundamentals"})
-            continue
+    print(f"有効な株価キャッシュを読み込みました: {len(records)} / {len(universe)} 銘柄")
 
-        records.append({"ticker": ticker, "name": name, "hist": hist, "fundamentals": fundamentals, "status": "ok"})
-
+    print("\nテーマ情報の構築中...")
     theme_context = build_theme_context(records, config)
 
     all_events: list[pd.DataFrame] = []
     ticker_rows = []
 
-    for rec in records:
+    print("\nイベント検出と過去検証の計算を開始します...")
+    for idx, rec in enumerate(records):
         ticker = rec["ticker"]
         name = rec["name"]
         hist = rec["hist"]
         fundamentals = rec["fundamentals"]
 
+        if (idx + 1) % 100 == 0 or (idx + 1) == len(records):
+            print(f"  [計算中] {idx+1} / {len(records)} 銘柄 ({ticker})...")
+
         if hist is None:
-            ticker_rows.append({"ticker": ticker, "name": name, "events": 0, "status": rec["status"]})
-            continue
-        if fundamentals is None:
             ticker_rows.append({"ticker": ticker, "name": name, "events": 0, "status": rec["status"]})
             continue
 
@@ -508,20 +615,20 @@ def main() -> None:
                     "big_winners": 0,
                     "big_winner_rate": 0.0,
                     "status": "no_events",
-                    "sector": fundamentals["sector"],
-                    "industry": fundamentals["industry"],
+                    "sector": fundamentals["sector"] if fundamentals else None,
+                    "industry": fundamentals["industry"] if fundamentals else None,
                 }
             )
             continue
 
         events.insert(0, "ticker", ticker)
         events.insert(1, "name", name)
-        events["sector"] = fundamentals["sector"]
-        events["industry"] = fundamentals["industry"]
-        events["market_cap_billion"] = round((fundamentals["market_cap"] or 0.0) / 1_000_000_000, 3)
-        events["revenue_growth_pct"] = fundamentals["revenue_growth_pct"]
-        events["profit_margin_pct"] = fundamentals["profit_margin_pct"]
-        events["roe_pct"] = fundamentals["roe_pct"]
+        events["sector"] = fundamentals["sector"] if fundamentals else None
+        events["industry"] = fundamentals["industry"] if fundamentals else None
+        events["market_cap_billion"] = round((fundamentals["market_cap"] or 0.0) / 1_000_000_000, 3) if fundamentals else None
+        events["revenue_growth_pct"] = fundamentals["revenue_growth_pct"] if fundamentals else None
+        events["profit_margin_pct"] = fundamentals["profit_margin_pct"] if fundamentals else None
+        events["roe_pct"] = fundamentals["roe_pct"] if fundamentals else None
 
         all_events.append(events)
         ticker_rows.append(
@@ -531,12 +638,13 @@ def main() -> None:
                 "events": int(len(events)),
                 "big_winners": int(events["big_winner"].sum()),
                 "big_winner_rate": float(events["big_winner"].mean()),
-                "status": "ok",
-                "sector": fundamentals["sector"],
-                "industry": fundamentals["industry"],
+                "status": rec["status"],
+                "sector": fundamentals["sector"] if fundamentals else None,
+                "industry": fundamentals["industry"] if fundamentals else None,
             }
         )
 
+    print("\n結果ファイルを書き出し中...")
     events_df = pd.concat(all_events, ignore_index=True) if all_events else pd.DataFrame()
     ticker_df = pd.DataFrame(ticker_rows)
     summary_df = summarize_events(events_df) if not events_df.empty else pd.DataFrame()
@@ -544,7 +652,7 @@ def main() -> None:
     if not events_df.empty:
         events_df.to_csv(args.output_dir / "big_winner_events.csv", index=False, encoding="utf-8-sig")
     if not ticker_df.empty:
-        ticker_df.to_csv(args.output_dir / "big_winner_ticker_summary.csv", index=False, encoding="utf-ok")
+        ticker_df.to_csv(args.output_dir / "big_winner_ticker_summary.csv", index=False, encoding="utf-8-sig")
     if not summary_df.empty:
         summary_df.to_csv(args.output_dir / "big_winner_event_summary.csv", index=False, encoding="utf-8-sig")
 
