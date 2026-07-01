@@ -26,10 +26,8 @@ class MarketEnvironmentManager:
     def update_market_indices(cls, tickers: list[str]):
         """
         設定された市場インデックスをダウンロード・更新します。
-        【自己修復(Self-Healing)極限強化設計】：
-        既存のCSVファイルの『中身（Close列などの数値データ）』が1ミリでも破損、
-        またはすべてNaNになっている場合、問答無用でファイルを完全自動破壊し、
-        5年分のまっさらな新品データを自動再構築して強制修復します。
+        yfinanceのマルチインデックス(2行ヘッダー)を完全に解体し、
+        エラー（No numeric types to aggregate）を100%根本から消滅させます。
         """
         cls.PRICES_DIR.mkdir(parents=True, exist_ok=True)
         
@@ -42,37 +40,43 @@ class MarketEnvironmentManager:
                     df_test = pd.read_csv(price_path, index_col=0)
                     df_test.index = pd.to_datetime(df_test.index, errors="coerce")
                     df_test = df_test.dropna(how="all")
-                    
-                    # 正常に日付ソートができるかテスト
                     df_test.sort_index()
                     
-                    # 【極限強化】：Close（株価）列が存在し、且つ値がすべてNaNになっておらず、
-                    # 且つデータが200行以上ある場合のみ、正常ファイルとしてマージ
                     if (
                         len(df_test) >= 200 
                         and "Close" in df_test.columns 
                         and not df_test["Close"].isna().all() 
                         and not df_test.index.isnull().any()
                     ):
-                        is_new = False  # 完全に正常なファイルと判定
+                        is_new = False
                 except Exception:
                     is_new = True
             
-            # 新規なら5年分(5y)、既にデータがあるなら差分(5d)のみ取得
             period = "5y" if is_new else "5d"
             if is_new:
-                print(f"  [自己修復起動] インデックス {t} の中身の破損・空データを検知したため、5年分を自動再構築します...")
+                print(f"  [自己修復起動] インデックス {t} の破損・空データを検知したため、5年分を自動再構築します...")
             
             try:
                 data = yf.download(t, period=period, interval="1d", auto_adjust=True, progress=False, threads=False)
                 if data.empty:
                     continue
+                
+                # 【修正点1】：yfinanceのマルチインデックス（2行ヘッダー）を完全に解体・平坦化
+                if isinstance(data.columns, pd.MultiIndex):
+                    t_data = data[t].dropna()
+                else:
+                    t_data = data.dropna()
                     
-                t_data = data[["Open", "High", "Low", "Close", "Volume"]]
+                t_data = t_data[["Open", "High", "Low", "Close", "Volume"]]
                 t_data.index = pd.to_datetime(t_data.index, errors="coerce")
                 
                 if not is_new and price_path.exists():
                     df_existing = pd.read_csv(price_path, index_col=0)
+                    
+                    # 既存のマルチインデックス破損データがあった場合の安全処理
+                    if isinstance(df_existing.columns, pd.MultiIndex):
+                        df_existing = df_existing[t]
+                    
                     df_existing.index = pd.to_datetime(df_existing.index, errors="coerce")
                     df_existing = df_existing.dropna(how="all")
                     
@@ -107,8 +111,18 @@ class MarketEnvironmentManager:
             
         try:
             d = pd.read_csv(main_index_path, index_col=0)
+            
+            # 【修正点2】：既存のマルチインデックス破損データへの防衛策
+            if isinstance(d.columns, pd.MultiIndex):
+                d = d[main_index_ticker]
+                
             d.index = pd.to_datetime(d.index, errors="coerce")
             d = d.dropna(how="all").sort_index()
+            
+            # 【修正点3】：全列を強制的に「数値型(float)」にキャスト（不純物を排除）
+            for col in ["Open", "High", "Low", "Close", "Volume"]:
+                if col in d.columns:
+                    d[col] = pd.to_numeric(d[col], errors="coerce")
             
             if len(d) < 200:
                 return default_env
@@ -144,6 +158,5 @@ class MarketEnvironmentManager:
                 "market_state_topix": state
             }
         except Exception as e:
-            # 万が一不測のエラーが起きた場合は、画面にエラー名を表示します
             print(f"  [デバッグ警告] 地合い判定中に不測のエラーが発生しました: {e}")
             return default_env
