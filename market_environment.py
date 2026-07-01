@@ -26,18 +26,20 @@ class MarketEnvironmentManager:
     def update_market_indices(cls, tickers: list[str]):
         """
         設定された市場インデックスをダウンロード・更新します。
-        データが存在しない、または不完全な場合は自動的に5年分(5y)を一括取得します。
+        インデックスの型競合（'<' not supported）を完全に回避するため、日付型を徹底統一します。
         """
         cls.PRICES_DIR.mkdir(parents=True, exist_ok=True)
         
         for t in tickers:
             price_path = cls.PRICES_DIR / f"{t}.csv"
             
-            # 【安全設計】：データが既に200行以上存在するかをチェック
+            # 【修正点1】：既存データを読み込み、日付型へ強制クレンジング
             is_new = True
             if price_path.exists():
                 try:
-                    df_test = pd.read_csv(price_path, index_col=0, parse_dates=True)
+                    df_test = pd.read_csv(price_path, index_col=0)
+                    df_test.index = pd.to_datetime(df_test.index, errors="coerce")
+                    df_test = df_test.dropna(how="all")
                     if len(df_test) >= 200:
                         is_new = False
                 except Exception:
@@ -47,16 +49,22 @@ class MarketEnvironmentManager:
             period = "5y" if is_new else "5d"
             
             try:
-                # シングルダウンロードを yfinance で安全に実行
                 data = yf.download(t, period=period, interval="1d", auto_adjust=True, progress=False, threads=False)
                 if data.empty:
                     continue
                     
                 t_data = data[["Open", "High", "Low", "Close", "Volume"]]
+                # yfinance のインデックスも確実に日付型にする
+                t_data.index = pd.to_datetime(t_data.index, errors="coerce")
                 
                 if not is_new and price_path.exists():
-                    df_existing = pd.read_csv(price_path, index_col=0, parse_dates=True)
+                    # 【修正点2】：既存CSVを読み込み、日付型へ強制統一してからconcat
+                    df_existing = pd.read_csv(price_path, index_col=0)
+                    df_existing.index = pd.to_datetime(df_existing.index, errors="coerce")
+                    df_existing = df_existing.dropna(how="all")
+                    
                     df_combined = pd.concat([df_existing, t_data])
+                    df_combined.index = pd.to_datetime(df_combined.index, errors="coerce")
                     df_combined = df_combined[~df_combined.index.duplicated(keep="last")].sort_index()
                 else:
                     df_combined = t_data.sort_index()
@@ -73,7 +81,6 @@ class MarketEnvironmentManager:
         tickers = cls.load_config_tickers()
         cls.update_market_indices(tickers)
         
-        # 1306.T を環境判定用インデックスとする
         main_index_ticker = tickers[0] if tickers else "1306.T"
         main_index_path = cls.PRICES_DIR / f"{main_index_ticker}.csv"
         
@@ -86,10 +93,9 @@ class MarketEnvironmentManager:
             return default_env
             
         try:
-            d = pd.read_csv(main_index_path, index_col=0, parse_dates=True).sort_index()
+            d = pd.read_csv(main_index_path, index_col=0)
             
-            # 【修正点】：インデックスを強制的に美しい日付型（DatetimeIndex）にクレンジング
-            # これによって、WindowsにおけるPandasの日付Warning警告と、それに続く型エラーを100%完全消滅させます
+            # 【修正点3】：ここでも日付型へのクレンジングを徹底
             d.index = pd.to_datetime(d.index, errors="coerce")
             d = d.dropna(how="all").sort_index()
             
@@ -99,7 +105,6 @@ class MarketEnvironmentManager:
             d["ma25"] = d["Close"].rolling(25).mean()
             d["ma200"] = d["Close"].rolling(200).mean()
             
-            # 日付型の比較
             formatted_index = d.index.strftime("%Y-%m-%d")
             
             if date_str in formatted_index:
