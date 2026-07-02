@@ -225,7 +225,7 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
 
     # インポート (循環参照防止のため関数内でインポート)
     from market_environment import MarketEnvironmentManager
-    from state5_advanced_analyzer import State5AdvancedAnalyzer
+    from state5_explainable_engine import State5ExplainableEngine # 👈 ★このように書き換えます
     
     # 地合いの評価
     env_desc, stats_str = State5AdvancedAnalyzer.get_market_expectancy_and_stats(market_state, config)
