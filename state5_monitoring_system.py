@@ -366,7 +366,7 @@ def main():
                     continue
 
                 # --- 【本番運用仕様に戻しました】：State 5 のみスキャン ---
-                if latest_state == 5:
+                if True:
                     score, comments = score_and_comment_candidate(latest_row)
                     
                     # --- 説明可能パラメータの自動算出 ---
