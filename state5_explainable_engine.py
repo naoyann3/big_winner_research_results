@@ -287,4 +287,8 @@ class State5ExplainableEngine:
             f"  ・Profit Factor (PF): {base_stats['pf']:.2f} / 平均最大下落率: {base_stats['max_dd']:.2f}%"
         )
         
+<<<<<<< HEAD
         return env_desc.get(market_state, "中立市場です。"), stats_str
+=======
+        return env_desc.get(market_state, "中立市場です。"), stats_str
+>>>>>>> 780c58f89d589da946ac9c4d298064ff68d9c5e4
