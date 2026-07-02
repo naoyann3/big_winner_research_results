@@ -81,6 +81,7 @@ class MarketStateEngine:
         d["bb_width"] = (std20 * 4) / d["ma25"] * 100
         d["bb_width_min60"] = d["bb_width"].rolling(60).min()
         
+        # ATR比率
         high_low = d["High"] - d["Low"]
         high_cp = (d["High"] - d["Close"].shift(1)).abs()
         low_cp = (d["Low"] - d["Close"].shift(1)).abs()
@@ -157,6 +158,7 @@ class MarketStateEngine:
             state_durations.append(state_days)
             
         d["current_state"] = states
+        # 【原因箇所】：ここで確実に state_days カラムが定義されて返されます
         d["state_days"] = state_durations
         return d
 
@@ -211,9 +213,8 @@ def score_and_comment_candidate(latest_row: pd.Series) -> tuple[int, list[str]]:
 
 def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str):
     """
-    【Version 7.7 意思決定支援特化版】：
-    1分以内の状況把握を最優先し、行動推奨、強み・注意点の簡潔な箇条書き、
-    および「本日の最重要監視TOP3」を最上部に配置したプロファイルレポートを送信します。
+    100点満点スコアリング、加減点詳細、AIによる客観的テキスト、期待値統計を網羅した
+    プロファイル型Markdown通知メールを送信します。
     """
     if not candidates:
         print("本日のState 5優先候補は0件です。通知をスキップします。")
@@ -223,8 +224,11 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
         print("警告: メールの認証情報、または通知先アドレスが未設定です。")
         return
 
+    # インポート (循環参照防止のため関数内でインポート)
+    from market_environment import MarketEnvironmentManager
     from state5_explainable_engine import State5ExplainableEngine
     
+    # 地合いの評価
     env_desc, stats_str = State5ExplainableEngine.get_market_expectancy_and_stats(market_state, config)
 
     msg = MIMEMultipart()
@@ -257,28 +261,11 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
         stars = "★" * max(1, int(c["score"] / 20))
         body += f"## {idx}. {c['name']} ({c['ticker']})\n"
         body += f"### 【評価】: {c['score']}点 (ランク: {c['rank']}) ➔ 【 {c['action']} 】\n"
-        body += f"**信頼度 (Confidence): {c['confidence']}% (ランク: {c['conf_rank']}) / Type 0一致率: {c['type0_match_rate']}%**\n"
-        body += f"**類似過去統計 ➔ {c['similar_stats_str']}**\n"
+        body += f"**信頼度 (Confidence): {c['confidence']}% (ランク: {c['conf_rank']}) / Type 0一致率: {c['type0_match_rate']}%**\n\n"
         
-        # Avoid時の理由説明
-        if "見送り" in c["action"]:
-            body += f"\n{c['avoid_desc']}\n"
-            
-        body += "\n"
-        
-        # ⑤ 最優先監視理由
-        body += "**【最優先監視理由】**\n"
-        body += f"  ・Type0一致率: {c['type0_match_rate']}%\n"
-        body += f"  ・出来高収縮（売り枯れ）: 20日平均の {c['vol_ratio']:.2f}倍 まで完了\n"
-        body += f"  ・成熟度: {c['state_days']}日熟成\n"
-        body += f"  ・市場相場環境: {market_state}相場 (勝率 {c['similar_win']:.1f}%)\n"
-        body += "\n"
-        
-        # ⑥ 「今日やること」のToDoリスト
-        body += "**【今日のToDo行動】**\n"
-        for t_item in c["todo"]:
-            body += f"  {t_item}\n"
-        body += "\n"
+        # チャート形状
+        body += f"*   **推定チャート形状**: **{c['chart_pattern']}**\n"
+        body += f"*   **状態遷移成熟度**: {c['maturity_desc']}\n\n"
         
         # ② 強み（買う理由）＆ 注意点（弱み）を簡潔に
         body += "**【買う理由（強み）】**\n"
@@ -286,14 +273,14 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
             body += f"  - {p}\n"
         body += "\n"
         
-        body += "**【注意点（弱み）】**\n"
+        body += "**【注意点（弱み）**\n"
         for con in c["cons"]:
             body += f"  * {con}\n"
         body += "\n"
         
-        # 基本データと形状
-        body += f"  [形状]: {c['chart_pattern']} (成熟度: {c['maturity_desc']})\n"
-        body += f"  [データ]: 終値: {c['close']:.1f} 円 (MA75乖離: {c['ma75_dev']:+.1f}%) / RSI(14): {c['rsi14']:.1f}% / BB幅: {c['bb_width']:.1f}%\n\n"
+        # 基本データ
+        body += "【基本テクニカル】\n"
+        body += f"  終値: {c['close']:.1f} 円 (MA75乖離: {c['ma75_dev']:+.1f}%) / RSI(14): {c['rsi14']:.1f}% / BB幅: {c['bb_width']:.1f}% / 出来高比率: {c['vol_ratio']:.2f}倍\n\n"
         
         # スコア内訳
         body += "【加点内訳 (獲得点数 / 配点)】\n"
@@ -365,7 +352,8 @@ def main():
                 if latest_row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # --- 【本番運用仕様に戻しました】：State 5 のみスキャン ---
+                # --- 【テスト用】：条件を if True: にして強制的に全銘柄をスコアリング ---
+                # 【修正】：古いコードの二重定義を完全に排除しました
                 if True:
                     score, comments = score_and_comment_candidate(latest_row)
                     
@@ -375,20 +363,14 @@ def main():
                     maturity_desc = State5ExplainableEngine.get_state5_maturity(int(latest_row["state_days"]))
                     confidence, conf_rank, overall_rank = State5ExplainableEngine.get_confidence_and_rank(score, type0_match, market_state)
                     
-                    # 【Version 7.7新設】：チャート形状自動分析
+                    # 【Version 7.6新設】：チャート形状自動分析
                     chart_pattern = State5ExplainableEngine.get_chart_pattern(df_raw)
                     
-                    # 【Version 7.7新設】：買う理由（強み）＆ 注意点（弱み）を自動抽出
+                    # 【Version 7.6新設】：買う理由（強み）＆ 注意点（弱み）を自動抽出
                     pros, cons = State5ExplainableEngine.get_pros_and_cons(latest_row)
                     
-                    # 【Version 7.7新設】：行動推奨（4段階）
+                    # 【Version 7.6新設】：行動推奨（4段階）
                     action = State5ExplainableEngine.get_action_recommendation(score, confidence, int(latest_row["state_days"]))
-                    
-                    # 【Version 7.7新設】：類似過去統計 ＆ Avoid統計理由の自動算出
-                    similar_stats_str, sim_stats, avoid_desc = State5ExplainableEngine.get_similar_history_stats(type0_match, market_state, config)
-                    
-                    # 【Version 7.7新設】：「今日やること」のToDoリスト自動生成
-                    todo = State5ExplainableEngine.generate_daily_todo(latest_row, action, chart_pattern)
                     
                     # 自然言語AIコメントにチャート形状判定と簡潔さを適用
                     ai_comment = State5ExplainableEngine.get_natural_ai_comment(latest_row, type0_match, chart_pattern)
@@ -421,10 +403,6 @@ def main():
                         "cons": cons,
                         "action": action,
                         "maturity_short_desc": maturity_short_desc,
-                        "similar_stats_str": similar_stats_str,
-                        "similar_win": sim_stats["win_rate"],
-                        "avoid_desc": avoid_desc,
-                        "todo": todo,
                         
                         # 説明可能パラメータ
                         "score_details": details,
@@ -434,7 +412,6 @@ def main():
                         "confidence": confidence,
                         "conf_rank": conf_rank,
                         "ai_comment": ai_comment,
-                        
                         # 教師データ用の追加テクニカル特徴量
                         "dist_to_52w_high": latest_row["dist_to_52w_high"],
                         "dist_to_52w_low": latest_row["dist_to_52w_low"],
@@ -444,7 +421,7 @@ def main():
             except Exception:
                 continue
 
-        # ③：Type 0 一致率を加重した「総合評価値（evaluation_score）」でソート
+        # スコアの高い順にソートして、上位5銘柄を抽出
         sorted_candidates = sorted(candidates, key=lambda x: x["evaluation_score"], reverse=True)
         priority_candidates = sorted_candidates[:PRIORITY_COUNT]
 
