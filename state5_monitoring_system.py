@@ -209,7 +209,12 @@ def score_and_comment_candidate(latest_row: pd.Series) -> tuple[int, list[str]]:
     return score, comments
 
 
-def notify_state5_watch(candidates: list[dict], date_str: str):
+def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str):
+    """
+    【Version 6.1 アップグレード版】：
+    100点満点スコアリング、加減点詳細、AIによる客観的テキスト、期待値統計を網羅した
+    プロファイル型Markdown通知メールを送信します。
+    """
     if not candidates:
         print("本日のState 5優先候補は0件です。通知をスキップします。")
         return
@@ -218,28 +223,63 @@ def notify_state5_watch(candidates: list[dict], date_str: str):
         print("警告: メールの認証情報、または通知先アドレスが未設定です。")
         return
 
+    # インポート (循環参照防止のため関数内でインポート)
+    from market_environment import MarketEnvironmentManager
+    from state5_advanced_analyzer import State5AdvancedAnalyzer
+    
+    # 地合いの評価
+    env_desc, stats_str = State5AdvancedAnalyzer.get_market_expectancy_and_stats(market_state, config)
+
     msg = MIMEMultipart()
     msg["From"] = f"{SENDER_NAME} <{GMAIL_USER}>"
     msg["To"] = NOTIFICATION_EMAIL
     msg["Subject"] = f"【State5 Watch】{date_str} 優先候補 {len(candidates)} 銘柄"
 
-    body = f"# 【{DISPLAY_NAME}】{date_str} 優先度順リスト\n"
-    body += "過去の大化け株データに基づく評価値（100点満点）の上位優先候補です。\n"
+    # ヘッダー構築
+    body = f"# 【{DISPLAY_NAME}】{date_str} 優先順位付きリスト\n"
+    body += "客観的なデータに基づき、過去の大化け株DNAとの類似度を100点満点で評価した優先候補です。\n"
+    body += "----------------------------------------\n"
+    body += f"### ■ 本日の相場環境判定: 【 {market_state} 】\n"
+    body += f"*   **地合い状況**: {env_desc}\n"
+    body += f"**【現在の地合いにおける、過去5,487件の実績期待値】**:\n{stats_str}\n"
     body += "----------------------------------------\n\n"
 
+    # 各銘柄詳細
     for idx, c in enumerate(candidates, 1):
         stars = "★" * max(1, int(c["score"] / 20))
-        body += f"### {idx}. {c['name']} ({c['ticker']})\n"
-        body += f"**スコア: {c['score']}点** ({stars})\n"
-        body += f"*   **現在状態**: State {c['state']} (滞在: {c['days_in_state']}日目)\n"
-        body += f"*   **MA75乖離**: {c['ma75_dev']:+.1f}%\n"
-        body += f"*   **RSI(14)**: {c['rsi14']:.1f}\n"
-        body += f"*   **BB幅**: {c['bb_width']:.1f}%\n"
-        body += f"*   **出来高比率**: {c['vol_ratio']:.2f}\n"
-        body += f"*   **定型コメント**: {', '.join(c['comments'])}\n"
+        body += f"## {idx}. {c['name']} ({c['ticker']})\n"
+        body += f"### 総合評価: 【 {c['score']}点 】 / ランク: 【 {c['rank']} 】 ({stars})\n"
+        body += f"**信頼度 (Confidence): {c['confidence']}% (ランク: {c['conf_rank']})**\n\n"
+        
+        # 状態と成熟度
+        body += f"*   **状態遷移状況**: {c['maturity_desc']}\n"
+        body += f"*   **Type 0（黄金仕込み）一致率**: {c['type0_match_rate']}%\n\n"
+        
+        # 特徴量詳細
+        body += "【基本テクニカルデータ】\n"
+        body += f"  ・株価終値  : {c['close']:.1f} 円 (MA75乖離: {c['ma75_dev']:+.1f}%)\n"
+        body += f"  ・RSI(14)   : {c['rsi14']:.1f} % (中立適正圏)\n"
+        body += f"  ・BB幅      : {c['bb_width']:.1f} % (スクイーズ幅)\n"
+        body += f"  ・出来高比率: {c['vol_ratio']:.2f} 倍 (20日平均比)\n\n"
+        
+        # スコア内訳
+        body += "【加点内訳 (獲得点数 / 配点)】\n"
+        for item, (gain, max_p) in c["score_details"].items():
+            body += f"  - {item:12s}: {gain:2d} / {max_p:2d}\n"
+        body += "\n"
+        
+        # 減点理由
+        if c["deductions"]:
+            body += "【減点理由】\n"
+            for ded in c["deductions"]:
+                body += f"  * {ded['factor']} (減点: {ded['penalty']}点)\n"
+            body += "\n"
+            
+        # 自然言語AIコメント
+        body += f"{c['ai_comment']}\n"
         body += "----------------------------------------\n\n"
 
-    body += "\n※本システムは客観的データに基づき期待値の高い候補を提示しています。最終的な投資判断は必ずチャートを確認した上で行ってください。\n"
+    body += "\n※本システムは未来の株価を断定・予言するものではありません。期待値の高い局面にいる銘柄を自動選別することで、人間の分析・判断時間を極限まで削減することを目的に設計されています。最終判断は必ずチャートを確認の上、ご自身の規律に従って行ってください。\n"
 
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
@@ -247,7 +287,7 @@ def notify_state5_watch(candidates: list[dict], date_str: str):
         server.starttls()
         server.login(GMAIL_USER, GMAIL_PASS)
         server.send_message(msg)
-    print("毎朝のState 5優先候補メールを正常に送信しました。")
+    print("毎朝のState 5優先候補（説明可能プロファイル型）メールを正常に送信しました。")
 
 
 def main():
@@ -267,6 +307,22 @@ def main():
 
         print(f"=== State 5 監視＆スコアリングシステムの稼働を開始します (対象: {len(tickers)} 銘柄) ===")
 
+        # 説明可能エンジンのインポート
+        from state5_explainable_engine import State5ExplainableEngine
+        from market_environment import MarketEnvironmentManager
+
+        # 事前に地合い（市場環境）を判定
+        # 最初の銘柄をダミーロードして日付だけ特定
+        first_ticker = tickers[0]
+        try:
+            df_dummy = pd.read_csv(PRICES_DIR / f"{first_ticker}.csv", index_col=0, parse_dates=True)
+            latest_date = df_dummy.index[-1].strftime("%Y-%m-%d")
+        except Exception:
+            latest_date = datetime.now().strftime("%Y-%m-%d")
+
+        market_env = MarketEnvironmentManager.get_current_environment(latest_date)
+        market_state = market_env["market_state_topix"]
+
         for idx, t in enumerate(tickers):
             price_path = PRICES_DIR / f"{t}.csv"
             if not price_path.exists():
@@ -282,21 +338,27 @@ def main():
                 
                 latest_row = df_sim.iloc[-1]
                 latest_state = int(latest_row["current_state"])
-                
-                if latest_date is None:
-                    latest_date = df_sim.index[-1].strftime("%Y-%m-%d")
 
                 if latest_row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # スコアリング
+                # 必須判定: State 5 であること
                 if latest_state == 5:
+                    # 基本のスコアリング
                     score, comments = score_and_comment_candidate(latest_row)
+                    
+                    # --- 【Version 7.5 新設】：説明可能パラメータの自動算出 ---
+                    details, deductions = State5ExplainableEngine.get_score_details_and_deductions(latest_row, config)
+                    type0_match = State5ExplainableEngine.get_type0_matching_rate(latest_row)
+                    maturity_desc = State5ExplainableEngine.get_state5_maturity(int(latest_row["state_days"]))
+                    confidence, conf_rank, overall_rank = State5ExplainableEngine.get_confidence_and_rank(score, type0_match, market_state)
+                    ai_comment = State5ExplainableEngine.get_natural_ai_comment(latest_row, type0_match)
                     
                     candidates.append({
                         "ticker": t,
                         "name": name_map.get(t, t),
                         "score": score,
+                        "rank": overall_rank,
                         "state": latest_state,
                         "days_in_state": int(latest_row["state_days"]),
                         "close": float(latest_row["Close"]),
@@ -305,6 +367,14 @@ def main():
                         "bb_width": latest_row["bb_width"],
                         "vol_ratio": latest_row["vol_ratio_20"],
                         "comments": comments,
+                        # 説明可能パラメータ
+                        "score_details": details,
+                        "deductions": deductions,
+                        "type0_match_rate": type0_match,
+                        "maturity_desc": maturity_desc,
+                        "confidence": confidence,
+                        "conf_rank": conf_rank,
+                        "ai_comment": ai_comment,
                         # 教師データ用の追加テクニカル特徴量
                         "dist_to_52w_high": latest_row["dist_to_52w_high"],
                         "dist_to_52w_low": latest_row["dist_to_52w_low"],
@@ -318,29 +388,24 @@ def main():
         sorted_candidates = sorted(candidates, key=lambda x: x["score"], reverse=True)
         priority_candidates = sorted_candidates[:PRIORITY_COUNT]
 
-        # 毎朝のメール送信
-        notify_state5_watch(priority_candidates, latest_date)
+        # 毎朝の説明可能プロファイルメール送信 (地合いを考慮)
+        notify_state5_watch(priority_candidates, latest_date, market_state)
         
         # ==========================================
-        # ★【Version 7 新設】：自律学習・成績管理システムの自動フック ★
+        # ★【Version 7.0】：自律学習・成績管理システムの自動フック ★
         # ==========================================
         try:
             print("\n=== Version 7: 研究データ収集・成績管理システムを自動起動します ===")
             
-            # 1. 市場環境（地合い）の自動判定
-            from market_environment import MarketEnvironmentManager
-            market_env = MarketEnvironmentManager.get_current_environment(latest_date)
-            print(f"  [市場環境] TOPIX終値: {market_env['topix_close']:.1f} (地合い: {market_env['market_state_topix']})")
-            
-            # 2. 教師データ（履歴）のロギング (※5件制限の優先候補だけでなく、本日検出されたすべてのState 5銘柄を漏れなく保存)
+            # 1. 教師データ（履歴）のロギング
             from state5_history_logger import State5HistoryLogger
             State5HistoryLogger.log_candidates(candidates, latest_date, market_env, config)
             
-            # 3. 過去シグナルの成績自動追跡（採点）
+            # 2. 過去シグナルの成績自動追跡（採点）
             from performance_tracker import PerformanceTracker
             PerformanceTracker.track_and_score_history(config)
             
-            # 4. 実績評価レポート（Champion Report）の自動生成
+            # 3. 実績評価レポート（Champion Report）の自動生成
             from champion_report import ChampionReportGenerator
             ChampionReportGenerator.generate_report(config)
             
