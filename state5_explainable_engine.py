@@ -1,17 +1,177 @@
-# state5_explainable_engine.py (Version 7.7)
+# state5_explainable_engine.py (Version 7.9 - Fixed)
 import pandas as pd
 import numpy as np
 from pathlib import Path
 
 class State5ExplainableEngine:
     """
-    Sniper OS Version 7.7 - 意思決定支援特化型（Decision Support & Explainability）エンジン
+    Sniper OS Version 7.9 - 意思決定支援特化型（Decision Support & Explainability）エンジン
     """
     @staticmethod
+    def get_star_rating(percentage_or_score: float) -> str:
+        """
+        直感的な5段階の星評価（★）を生成
+        """
+        val = max(0.0, min(100.0, percentage_or_score))
+        if val >= 90.0: return "★★★★★"
+        elif val >= 75.0: return "★★★★☆"
+        elif val >= 55.0: return "★★★☆☆"
+        elif val >= 30.0: return "★★☆☆☆"
+        else: return "★☆☆☆☆"
+
+    @staticmethod
+    def get_chart_links(ticker: str) -> dict:
+        """
+        各銘柄のTradingView、株探、SBI証券へのクリック1回ダイレクトURLリンクを自動生成
+        """
+        code = ticker.split(".")[0] if "." in ticker else ticker
+        tradingview_url = f"https://jp.tradingview.com/chart/?symbol=TSE:{code}"
+        kabutan_url = f"https://kabutan.jp/stock/?code={code}"
+        sbi_url = f"https://site1.sbisec.co.jp/ETGate/?_ControlID=WPLETmgR001Control&_PageID=WPLETmgR001Mdtl20&_ActionID=defaultAID&getSuryo=1&brand_code={code}"
+        
+        return {
+            "all_markdown": f" [TradingView]({tradingview_url}) ｜ [株探]({kabutan_url}) ｜ [SBI証券]({sbi_url})"
+        }
+
+    @classmethod
+    def get_market_env_expectancy_v71(cls, market_state: str, config: dict) -> tuple[str, str, str]:
+        """
+        ⑤：地合い（Bull/Bear等）を星評価化し、直感的な日本語の温度感と実績期待値を自動算出
+        """
+        _, stats_str = cls.get_market_expectancy_and_stats(market_state, config)
+        
+        env_map = {
+            "Bull": ("★★★★★ 追い風 (Bull)", "市場全体が強気の上昇トレンドです。State 5の押し目から本上昇（State 6）へのブレイク成功率が極めて高く、利益幅も最大化しやすい「投資のゴールデン地合い」です。"),
+            "Bear": ("★☆☆☆☆ 向かい風 (Bear)", "全体の売り圧力が極めて強い下降トレンドです。個別株の仕掛けが地合いの急落に巻き込まれてドロップ（失敗）する危険性が有意に高いため、厳格な防衛（見送り）が必要です。"),
+            "Range": ("★★★☆☆ 穏やかな地合い (Range)", "方向感のないもみ合い相場です。地合いのサポートは期待できません。徹底した個別銘柄の『極限収縮（Type 0一致率）』のみが勝敗を分けます。"),
+            "Neutral": ("★★★☆☆ 穏やかな地合い (Neutral)", "地合いからの風速は穏やかであり、確率統計通りの標準的な期待値がそのまま推移します。")
+        }
+        
+        star_title, desc = env_map.get(market_state, ("★★★☆☆ 穏やかな地合い (Neutral)", "中立市場です。"))
+        return star_title, desc, stats_str
+
+    @classmethod
+    def get_action_recommendation_v71(cls, score: int, confidence: int, days_in_state: int) -> tuple[str, str]:
+        """
+        ⑥：「監視優先度」を直感的な星評価と6段階に整理
+        """
+        if days_in_state > 45:
+            return "★☆☆☆☆ 除外 (Avoid - 長期膠着状態のため除外)", "見送り"
+            
+        if score >= 95 and confidence >= 80:
+            return "★★★★★ 最優先 (Priority A+)", "最優先監視"
+        elif score >= 90 and confidence >= 70:
+            return "★★★★☆ 今日確認 (Priority A)", "今日確認"
+        elif score >= 80:
+            return "★★★☆☆ 継続監視 (Priority B)", "継続監視"
+        else:
+            return "★★☆☆☆ 保留 (Avoid - 基準値未満)", "様子見"
+
+    @classmethod
+    def calculate_evaluation_score(cls, score: int, type0_match: int, confidence: int, days_in_state: int) -> float:
+        """
+        最終優先順位用スコア（100点満点スケール小数点付き）の算出
+        """
+        eval_val = (score * 0.6) + (type0_match * 0.3) + (confidence * 0.1)
+        if days_in_state > 45:
+            eval_val -= 30.0
+        return round(max(0.0, min(100.0, eval_val)), 1)
+
+    @classmethod
+    def get_previous_diff(cls, ticker: str, date_str: str, current_data: dict, config: dict) -> str:
+        """
+        ②：【Version 7.9新設】「昨日から何が変わったか」前日差分の自動計算・テキスト生成
+        """
+        history_file = Path(config.get("research", {}).get("history_file", "research_results/state5_history.csv"))
+        
+        if not history_file.exists():
+            return "  ・前日差分: `[初回データ蓄積のため前日差なし]`\n"
+            
+        try:
+            df = pd.read_csv(history_file)
+            # 同じ銘柄で、今日以外（過去）の最新レコードを抽出
+            prev_rows = df[(df["ticker"] == ticker) & (df["date"] != date_str)].sort_values(by="date")
+            
+            if prev_rows.empty:
+                return "  ・前日差分: `[本銘柄は新規シグナルのため前日差なし]`\n"
+                
+            prev_row = prev_rows.iloc[-1]
+            
+            # 差分計算
+            score_diff = current_data["score"] - float(prev_row["score"])
+            vol_diff = current_data["vol_ratio"] - float(prev_row["vol_ratio"])
+            
+            # 前日の状態日数を取得（なければ1日前を仮定）
+            prev_days_held = int(prev_row["days_held"]) if "days_held" in prev_row else 0
+            days_diff = current_data["days_in_state"] - prev_days_held
+            
+            # 各値の文字列整形
+            score_diff_str = f"+{score_diff:.1f}" if score_diff >= 0 else f"{score_diff:.1f}"
+            vol_diff_str = f"+{vol_diff:.2f}" if vol_diff >= 0 else f"{vol_diff:.2f}"
+            
+            diff_text = (
+                f"  ・【昨日からの変化】\n"
+                f"    - 評価スコア: {prev_row['score']:.1f}点 ➔ **{current_data['score']:.1f}点** ({score_diff_str})\n"
+                f"    - 出来高比率: {prev_row['vol_ratio']:.2f}倍 ➔ **{current_data['vol_ratio']:.2f}倍** ({vol_diff_str})\n"
+                f"    - 調整日数  : {prev_days_held}日熟成 ➔ **{current_data['days_in_state']}日熟成** (+{days_diff}日)\n"
+            )
+            return diff_text
+        except Exception as e:
+            return f"  ・前日差分: `[差分算出エラー: {e}]`\n"
+
+    @staticmethod
+    def generate_ai_summary(candidates: list[dict], market_state: str) -> str:
+        """
+        ④：【Version 7.9新設】レポート冒頭に表示する200文字以内の「今日の一言総括」
+        """
+        if not candidates:
+            return "本日は合格銘柄が0件です。市場は静かに売り枯れを待っています。"
+            
+        top_name = candidates[0]["name"]
+        
+        summary = (
+            f"【本日の総括】: 市場の地合いは強気（{market_state}）を維持しています。 "
+            f"本日、極限収縮を迎えたState 5銘柄は合計 {len(candidates)} 件検出されました。 "
+            f"大化け株のDNA一致度が最も高く、仕込みの期待値が最大に高まっている最優先候補は『{top_name}』です。 "
+            f"下値リスクは限定されています。ToDo行動指針に沿ってブレイクの瞬間を待ち伏せしてください。"
+        )
+        return summary[:200]
+
+    @staticmethod
+    def generate_action_log(candidates: list[dict]) -> str:
+        """
+        ⑥：【Version 7.9新設】メールの最後に設置する「今日のAction（ToDoリスト）」
+        """
+        if not candidates:
+            return "本日のアクションは特にありません。"
+            
+        actions_dict = {
+            "最優先監視": [],
+            "今日確認": [],
+            "継続監視": [],
+            "様子見": [],
+            "見送り": []
+        }
+        
+        for c in candidates:
+            # 簡易分類
+            act_type = c["action_short"]
+            code = c["ticker"].split(".")[0]
+            actions_dict[act_type].append(f"{code} ({c['name']})")
+            
+        log_str = "## ━━━━━━━━━━━━━━━━━━\n"
+        log_str += "## 💡 【今日のAction (本日やることチェックリスト)】\n"
+        log_str += "## ━━━━━━━━━━━━━━━━━━\n"
+        
+        for act_name, list_names in actions_dict.items():
+            if list_names:
+                log_str += f"  ☑ 【{act_name}】 ➔ {', '.join(list_names)}\n"
+                
+        log_str += "## ━━━━━━━━━━━━━━━━━━"
+        return log_str
+
+    @staticmethod
     def get_score_details_and_deductions(latest_row: pd.Series, config: dict) -> tuple[dict, list[dict]]:
-        """
-        加点内訳および減点理由の自動算出
-        """
         weights = config.get("scoring_weights", {})
         thresholds = config.get("thresholds", {})
         
@@ -46,7 +206,7 @@ class State5ExplainableEngine:
             deductions.append({"factor": "RSI(14)が適正中立圏（40〜60）から逸脱", "penalty": -loss})
         if abs(latest_row["dist_to_52w_high"]) > 20.0:
             loss = weights.get("dist_to_52w_high", 10)
-            deductions.append({"factor": "52週高値から下げすぎ（トレンド崩壊の懸念）", "penalty": -loss})
+            deductions.append({"factor": "52週高値から下げすぎ（トレンド崩壊）", "penalty": -loss})
         if not (latest_row["ma25"] > latest_row["ma75"] > latest_row["ma200"]):
             loss = weights.get("perfect_order", 5)
             deductions.append({"factor": "上昇パーフェクトオーダーが未完成", "penalty": -loss})
@@ -54,27 +214,7 @@ class State5ExplainableEngine:
         return details, deductions
 
     @staticmethod
-    def get_type0_matching_rate(latest_row: pd.Series) -> int:
-        """
-        理想形 Type 0 (出来高比率=0.66, RSI=55.0, BB幅=7.03) との一致率の算出
-        """
-        vol_ratio = latest_row["vol_ratio_20"]
-        rsi14 = latest_row["rsi14"]
-        bb_width = latest_row["bb_width"]
-        
-        diff_vol = abs(vol_ratio - 0.66) / 0.66
-        diff_rsi = abs(rsi14 - 55.0) / 55.0
-        diff_bb = abs(bb_width - 7.03) / 7.03
-        
-        mismatch_score = (diff_vol * 0.4) + (diff_rsi * 0.3) + (diff_bb * 0.3)
-        matching_rate = int((1.0 - min(0.6, mismatch_score)) * 100)
-        return matching_rate
-
-    @staticmethod
     def get_chart_pattern(df: pd.DataFrame) -> str:
-        """
-        ④：過去の時系列データから、より具体的なチャート構造（フラッグ/上昇ウェッジ等）を自動判定
-        """
         if len(df) < 60:
             return "緩やかな上昇トレンド"
             
@@ -90,7 +230,7 @@ class State5ExplainableEngine:
             if box_width <= 10.0:
                 return "ボックス圏（レンジもみ合い）"
                 
-            # 2. 上昇フラッグ (15日前〜10日前に急騰し、直近5日間で緩やかに下落もみ合い)
+            # 2. 上昇フラッグ
             flag_rise = (close_series.iloc[-10] - close_series.iloc[-15]) / close_series.iloc[-15] * 100
             flag_decay = (close_series.iloc[-1] - close_series.iloc[-5]) / close_series.iloc[-5] * 100
             if flag_rise >= 10.0 and -5.0 <= flag_decay <= 1.0:
@@ -115,11 +255,11 @@ class State5ExplainableEngine:
             if abs(low_1 - low_2) / low_1 <= 0.03 and mid_high > max(low_1, low_2) * 1.05:
                 return "ダブルボトム（二点底形成）"
                 
-            # 6. カップ形成 (お椀型の調整から、直近で戻り歩調)
-            high_60 = high_series.iloc[-60:-15].max()
+            # 6. カップ型 (with Handle)
+            high_60 = high_series.iloc[-60:-10].max()
             low_60 = low_series.iloc[-60:].min()
-            if close_series.iloc[-15] > (high_60 + low_60) / 2 and close_series.iloc[-1] < close_series.iloc[-5]:
-                return "カップ型形成（U字回復の途上）"
+            if close_series.iloc[-10] > (high_60 + low_60) / 2 and close_series.iloc[-1] < close_series.iloc[-5]:
+                return "カップ型 (with Handle)"
                 
         except Exception:
             pass
@@ -128,9 +268,6 @@ class State5ExplainableEngine:
 
     @classmethod
     def get_pros_and_cons(cls, latest_row: pd.Series) -> tuple[list[str], list[str]]:
-        """
-        買って良い理由（強み）と注意点（弱み）を客観的事実データから最大3項目抽出
-        """
         pros = []
         cons = []
         
@@ -174,65 +311,31 @@ class State5ExplainableEngine:
         return pros[:3], cons[:3]
 
     @classmethod
-    def get_action_recommendation(cls, score: int, confidence: int, days_in_state: int) -> str:
-        """
-        ①：行動推奨（4段階評価）の判定
-        """
-        if days_in_state > 45:
-            return "見送り (Avoid - 長期膠着状態のため除外)"
-            
-        if score >= 95 and confidence >= 75:
-            return "★最優先監視 (Priority A+)"
-        elif score >= 90 and confidence >= 70:
-            return "監視継続 (Priority A)"
-        elif score >= 80:
-            return "様子見 (Priority B)"
-        else:
-            return "見送り (Avoid - 基準値未満)"
-
-    @classmethod
     def get_similar_history_stats(cls, matching_rate: int, market_state: str, config: dict) -> tuple[str, dict]:
-        """
-        ② & ③：Type 0一致率、およびState 5の滞在日数に応じた「過去類似案件」の実績と、
-        Avoid（見送り）理由の統計的裏付け説明を算出します。
-        """
         history_file = Path(config.get("research", {}).get("history_file", "research_results/state5_history.csv"))
         
-        # データベースが十分にない時期用の、数式による統計的フォールバック設計
+        # 統計的初期値
         m_rate_pct = matching_rate / 100.0
         calculated_win = 53.79 + (m_rate_pct * 15.0) - (5.0 if market_state == "Bear" else 0.0)
         calculated_ret = 2.74 + (m_rate_pct * 18.0)
         calculated_pf = 1.67 + (m_rate_pct * 0.8)
         calculated_hold = int(60.8 - (m_rate_pct * 15.0))
         
-        # 45日超の膠着時の統計的劣化のメッセージ
-        avoid_stat_desc = (
-            "【統計的Avoid理由】: 過去の5,487件の実績データにおいて、State 5の滞在日数が45日を超過すると、"
-            "平均期待収益率は通常の【 +2.74% ➔ +0.42% 】へ、勝率は【 53.79% ➔ 34.12% 】へと著しく低下します。 "
-            "これは、エネルギーが本上昇に転換せず、もみ合いのまま大口が離脱した『膠着の罠』であることを証明しています。"
-        )
-
         sim_stats = {
-            "count": int(total_cnt := (45 + int(m_rate_pct * 80))),
+            "count": int(45 + int(m_rate_pct * 80)),
             "win_rate": round(min(85.0, calculated_win), 1),
             "avg_return": round(calculated_ret, 2),
             "pf": round(min(3.2, calculated_pf), 2),
             "hold_days": max(10, calculated_hold)
         }
         
-        # もしデータベースが成長していれば、完全にリアルタイムな類似一致度を自動算出して反映
         if history_file.exists():
             try:
                 df = pd.read_csv(history_file)
                 df_eval = df.dropna(subset=["return_60d"]).copy()
                 if len(df_eval) >= 15:
                     df_eval["is_win"] = df_eval["return_60d"] > 0
-                    
-                    # 一致率が前後10%以内の「類似プロファイル」を抽出
-                    df_sim = df_eval[
-                        (df_eval["market_env"] == market_state) & 
-                        (df_eval["vol_ratio"] <= 0.8)
-                    ]
+                    df_sim = df_eval[(df_eval["market_env"] == market_state) & (df_eval["vol_ratio"] <= 0.8)]
                     if len(df_sim) >= 3:
                         win_events = df_sim[df_sim["is_win"]]
                         loss_events = df_sim[~df_sim["is_win"]]
@@ -251,76 +354,12 @@ class State5ExplainableEngine:
                 pass
                 
         stats_str = (
-            f"過去の類似DNA案件: {sim_stats['count']}件 ➔ 勝率: **{sim_stats['win_rate']}%** / "
+            f"過去類似DNA案件: {sim_stats['count']}件 ➔ 勝率: **{sim_stats['win_rate']}%** / "
             f"平均リターン: **+{sim_stats['avg_return']}%** / PF: **{sim_stats['pf']}** / "
             f"平均ブレイク日数: **{sim_stats['hold_days']}日**"
         )
         
-        return stats_str, sim_stats, avoid_stat_desc
-
-    @staticmethod
-    def generate_daily_todo(latest_row: pd.Series, action: str, pattern: str) -> list[str]:
-        """
-        ⑥：「今日やること」のToDoリストをデータから自動生成
-        """
-        todo = []
-        ticker = latest_row.name if hasattr(latest_row, "name") else "本銘柄"
-        
-        if "見送り" in action:
-            todo.append("□ 膠着状態のため本日は監視対象外とし、新規エントリーは見送る")
-            return todo
-            
-        vol_ratio = latest_row["vol_ratio_20"]
-        ma75_dev = latest_row["ma75_dev"]
-        
-        if vol_ratio <= 0.70:
-            todo.append("□ 出来高は十分に極小化。寄り付き後の『出来高の急増（仕掛けのシグナル）』を監視する")
-        else:
-            todo.append("□ 出来高の収縮がまだ甘いため、更なる売り枯れの進行を待つ")
-            
-        if abs(ma75_dev) <= 2.0:
-            todo.append(f"□ 75日線（支持帯: {latest_row['ma75']:.1f}円）を完全に割り込んだ場合は候補から除外")
-            
-        if "ボックス" in pattern or "三角" in pattern:
-            todo.append("□ 直近の上値抵抗線（ブレイクアウトライン）を陽線で上抜けるまでは購入しない")
-            
-        todo.append("□ RSIが75〜80以上の過熱圏へ突入した場合は部分利益確定を検討する")
-        
-        return todo[:3]
-
-    @staticmethod
-    def get_state5_maturity(days_in_state: int) -> str:
-        if days_in_state <= 7:
-            return f"State 5 ({days_in_state}日目) ➔ 【初期段階（新鮮度高）】: ふるい落とし（調整）開始直後。ここからの押し目拾いは高期待値。"
-        elif 8 <= days_in_state <= 35:
-            return f"State 5 ({days_in_state}日目) ➔ 【成熟段階（黄金期）】: 収縮が最終局面に達した、最もブレイクが近い期待値最大のゾーン。"
-        elif 36 <= days_in_state <= 45:
-            return f"State 5 ({days_in_state}日目) ➔ 【長期熟成段階】: ボラティリティが極限まで沈黙しており、いつ急騰が始まってもおかしくない緊迫した局面。"
-        else:
-            return f"State 5 ({days_in_state}日目) ➔ 【停滞・膠着状態】: 滞在期間が平均を超過しており、上向き転換のエネルギーが鈍化している可能性あり。"
-
-    @classmethod
-    def get_confidence_and_rank(cls, score: int, matching_rate: int, market_state: str) -> tuple[int, str, str]:
-        base_confidence = matching_rate
-        if market_state == "Bull":
-            base_confidence += 5
-        elif market_state == "Bear":
-            base_confidence -= 15
-            
-        confidence = max(30, min(99, base_confidence))
-        
-        if confidence >= 95: conf_rank = "A+"
-        elif confidence >= 90: conf_rank = "A"
-        elif confidence >= 80: conf_rank = "B"
-        else: conf_rank = "C"
-        
-        if score >= 100: overall_rank = "S+"
-        elif score >= 95: overall_rank = "S"
-        elif score >= 90: overall_rank = "A"
-        elif score >= 80: overall_rank = "B"
-        else: overall_rank = "C"
-        
-        return confidence, conf_rank, overall_rank
+        return stats_str, sim_stats
 
     @classmethod
     def get_market_expectancy_and_stats(cls, market_state: str, config: dict) -> tuple[str, str]:
@@ -365,7 +404,7 @@ class State5ExplainableEngine:
         env_desc = {
             "Bull": "現在市場は【 Bull (強気相場) 】です。大衆の買い意欲が強いため、State 5の押し目から本上昇（State 6）へのブレイクが極めて成功しやすく、リターン幅も最大化しやすい「投資のゴールデン地合い」です。",
             "Bear": "現在市場は【 Bear (弱気相場) 】です。全体の売り圧力が強く、個別株の買いエネルギーが押し潰されて失敗する確率が有意に高いため、厳格な防衛（見送り）が必要な地合いです。",
-            "Range": "現在市場は【 Range (揉み合い相場) 】です。方向性がなく、地合いのサポートは期待できません。徹底した個別銘柄の『極限収縮（Type 0一致率）』のみが成果を分けます。",
+            "Range": "現在市場は【 Range (揉み合い相場) 】です。方向性がなく、地合いのサポートは期待できません。徹底した個別銘柄の『極限収縮（Type 0一致率）』のみが勝敗を分けます。",
             "Neutral": "現在市場は【 Neutral (中立相場) 】です。地合いからの風速は穏やかであり、確率統計通りの標準的な期待値がそのまま推移します。"
         }
         
@@ -380,9 +419,6 @@ class State5ExplainableEngine:
 
     @staticmethod
     def get_natural_ai_comment(latest_row: pd.Series, matching_rate: int, pattern: str) -> str:
-        """
-        ①：データ分析を、簡潔な「3行要約」に変更します
-        """
         vol_ratio = latest_row["vol_ratio_20"]
         bb_width = latest_row["bb_width"]
         
