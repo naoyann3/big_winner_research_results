@@ -1,4 +1,4 @@
-# state5_explainable_engine.py (Version 7.6)
+# state5_explainable_engine.py (Version 7.6 - Fixed)
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -71,9 +71,10 @@ class State5ExplainableEngine:
         return matching_rate
 
     @staticmethod
-    def detect_chart_pattern(df: pd.DataFrame) -> str:
+    def get_chart_pattern(df: pd.DataFrame) -> str:
         """
-        ④：過去の時系列データから、チャート構造（ボックス/三角持ち合い/Wボトム等）を自動判定
+        【修正点】：detect_chart_pattern ➔ get_chart_pattern にリネーム
+        過去の時系列データから、チャート構造を自動判定します
         """
         if len(df) < 60:
             return "緩やかな上昇トレンド"
@@ -124,9 +125,10 @@ class State5ExplainableEngine:
         return "上昇トレンド（調整・押し目形成中）"
 
     @classmethod
-    def analyze_pros_and_cons(cls, latest_row: pd.Series) -> tuple[list[str], list[str]]:
+    def get_pros_and_cons(cls, latest_row: pd.Series) -> tuple[list[str], list[str]]:
         """
-        ②：買う理由（強み）と注意点（弱み）を、客観的な事実データから最大3項目抽出
+        【修正点】：analyze_pros_and_cons ➔ get_pros_and_cons にリネーム
+        買う理由（強み）と注意点（弱み）を客観的事実データから最大3項目抽出します
         """
         pros = []
         cons = []
@@ -175,8 +177,7 @@ class State5ExplainableEngine:
     @classmethod
     def get_action_recommendation(cls, score: int, confidence: int, days_in_state: int) -> str:
         """
-        ①：行動推奨（4段階評価）の判定
-        最優先監視 / 監視継続 / 様子見 / 見送り
+        行動推奨（4段階評価）の判定
         """
         if days_in_state > 45:
             return "見送り (Avoid - 長期膠着状態のため除外)"
@@ -293,7 +294,7 @@ class State5ExplainableEngine:
             f"ボラティリティ（BB幅 {bb_width:.1f}%）も沈黙レベルまで低下（スクイーズ）を完了させています。 "
             f"RSIは {rsi14:.1f}% と、過熱感が完全に消滅した理想的な中立圏を推移しています。 "
             f"過去5,487件の大化け株の物理法則では、この『限界収縮から始まる沈黙期（Type 0一致率: {matching_rate}%）』を経て、"
-            f"平均して10〜15営業日以内に出来高の再点火（再ブレイク）へと移行するケースが圧倒的に多く確認されています。 "
+            f"平均して10〜15営業日以内に出来高の急増（再ブレイク）へと移行するケースが圧倒的に多く確認されています。 "
             f"現在地は52週高値からわずか {dist_52w:.1f}% 押し戻された位置にあり、下値リスクが極限まで限定された、"
             f"典型的な『静かな待ち伏せ（仕込み）』の局面に位置しています。"
         )
