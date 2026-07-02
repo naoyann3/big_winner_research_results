@@ -210,11 +210,12 @@ def score_and_comment_candidate(latest_row: pd.Series) -> tuple[int, list[str]]:
     return score, comments
 
 
-def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str):
+def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str, state_counts: dict):
     """
-    【Version 7.95 意思決定支援特化版】：
-    データが0件であっても、正常にスキャンが完了した事実と地合いを報告する、
-    「正常稼働（0件）報告メール」を自動送信します。
+    【Version 8.0：Daily Command Center 大刷新版】：
+    最上部に「Layer 0：5秒で判断できる今日の結論」を配置し、
+    0件の日の「なぜ0件なのか」の動的分析、および「市場温度（State分布）」、「AI稼働証明（Heartbeat）」、
+    「前日との比較差分」を網羅した、極限の意思決定支援テンプレート。
     """
     if not (GMAIL_USER and GMAIL_PASS and NOTIFICATION_EMAIL):
         print("警告: メールの認証情報、または通知先アドレスが未設定です。")
@@ -222,40 +223,53 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
 
     from state5_explainable_engine import State5ExplainableEngine
     
-    # ⑤：地合いの星評価と期待値の取得
     star_title, env_desc, stats_str = State5ExplainableEngine.get_market_env_expectancy_v71(market_state, config)
+    
+    # 0件理由の自動分析（または1件以上の時の総括）
+    if not candidates:
+        ai_summary_str = State5ExplainableEngine.get_zero_case_analysis(state_counts)
+        subject_str = f"【State5 Watch】{date_str} 正常稼働報告（候補0件）"
+        action_decision = "待機（新規エントリーなし）"
+        decision_desc = "本日は期待値を守るための待機日です。取引をせず資金を温存することが今日の最良の利益になります。"
+    else:
+        ai_summary_str = State5ExplainableEngine.generate_ai_summary(candidates, market_state)
+        subject_str = f"【State5 Watch】{date_str} 優先候補 {len(candidates)} 銘柄"
+        action_decision = f"監視強化（優先候補: {candidates[0]['name']}等）"
+        decision_desc = f"本日、黄金仕込みのDNAを満たした銘柄が {len(candidates)} 件出現しました。ToDo指示を確認の上、チャートを監視してください。"
 
-    # ⑥：今日のAction Log（最下部のToDoチェックリスト）の自動生成
-    action_log_str = State5ExplainableEngine.generate_action_log(candidates)
+    # 昨日との差分（比較）
+    comparison_str = State5ExplainableEngine.get_history_comparison(len(candidates), market_state, config)
+    
+    # 市場温度（State分布）
+    market_temp_str = State5ExplainableEngine.get_market_temperature(state_counts)
+    
+    # AI Health Report (Heartbeat)
+    health_report_str = State5ExplainableEngine.get_health_report()
 
     msg = MIMEMultipart()
     msg["From"] = f"{SENDER_NAME} <{GMAIL_USER}>"
     msg["To"] = NOTIFICATION_EMAIL
-    
-    # 件名の自動分岐：0件なら稼働報告、1件以上なら優先候補として配信
-    if not candidates:
-        msg["Subject"] = f"【State5 Watch】{date_str} 正常稼働報告（候補0件）"
-    else:
-        msg["Subject"] = f"【State5 Watch】{date_str} 優先候補 {len(candidates)} 銘柄"
+    msg["Subject"] = subject_str
 
-    # ヘッダー構築
-    body = f"# 【{DISPLAY_NAME}】{date_str} 意思決定支援レポート\n"
-    body += "※情報量よりも「人間が1分以内で監視対象を決定できること」を最優先に設計されたレポートです。\n"
-    body += "----------------------------------------\n"
-    
-    if not candidates:
-        body += f"### 📝 【本日のAI総括 (200文字要約)】\n"
-        body += f"【本日の総括】: システムは本日も正常に稼働を完了しました。本日の相場環境は【 {market_state} 】ですが、全3,694銘柄の中に『State 5（黄金仕込み）』の過酷な基準に完全合致する本物の銘柄は検出されませんでした。 "
-        body += "本日は『完全な待ち（Avoid・様子見）』の日となります。無駄な取引を避け、資金を温存してください。\n"
-        body += "----------------------------------------\n\n"
-    else:
-        # ④：今日の一言総括（AI総括）の自動生成
-        ai_summary_str = State5ExplainableEngine.generate_ai_summary(candidates, market_state)
-        body += f"### 📝 【本日のAI総括 (200文字要約)】\n"
-        body += f"{ai_summary_str}\n"
-        body += "----------------------------------------\n"
-        
-        # ⑤ 最終コメント：「本日の最重要監視銘柄TOP3」の自動生成（1分要約）
+    # --------------------------------------------------
+    # 【Layer 0 (5秒で判断できる結論)】
+    # --------------------------------------------------
+    body = "## ━━━━━━━━━━━━━━━━━━\n"
+    body += "## 🔴 Layer 0：【今日の投資指令室（Daily Command Center）】\n"
+    body += "## ━━━━━━━━━━━━━━━━━━\n"
+    body += f"  ・本日の市場環境 : {star_title}\n"
+    body += f"  ・本日のState 5  : {len(candidates)} 件\n"
+    body += f"  ・今日のアクション: **【 {action_decision} 】**\n"
+    body += f"  ・AIによる判断   : {decision_desc}\n"
+    body += "## ━━━━━━━━━━━━━━━━━━\n\n"
+
+    # AI総括（市場解説へ進化）
+    body += "### 💡 【本日の市場解説コラム（AI総括）】\n"
+    body += f"{ai_summary_str}\n"
+    body += "----------------------------------------\n\n"
+
+    # 1分要約TOP3の表示（データがある場合のみ）
+    if candidates:
         top3_str = ""
         for idx, c in enumerate(candidates[:3], 1):
             top3_str += f"  {idx}位: **{c['name']} ({c['ticker']})** ➔ 総合 {c['evaluation_score']:.1f}点 ({c['rank']}) / {c['action_star']}\n"
@@ -264,19 +278,23 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
         body += "### 💡 【本日の最重要監視銘柄 TOP3 （1分要約）】\n"
         body += top3_str
         body += "----------------------------------------\n\n"
-    
-    body += f"### ■ 本日の相場環境判定: 【 {star_title} 】\n"
-    body += f"*   **地合い状況**: {env_desc}\n"
+
+    # 市場温度 ＆ 昨日との比較 ＆ AI Health
+    body += "### 📊 【市場の温度・地合いデータ（Regime）】\n"
+    body += "----------------------------------------\n"
+    body += "**【市場温度（State分布）】**\n"
+    body += f"{market_temp_str}\n\n"
+    body += "**【昨日との比較】**\n"
+    body += f"{comparison_str}\n"
     body += f"**【現在の地合いにおける、過去5,487件の実績期待値】**:\n{stats_str}\n"
     body += "----------------------------------------\n\n"
 
-    # 銘柄の表示（データがある場合のみ実行）
+    # 個別銘柄詳細（データがある場合のみ実行：Layer 1 〜 Layer 3）
     if not candidates:
         body += "## 💡 【今日のAction (本日やることチェックリスト)】\n"
         body += "  ☑ 【見送り (Avoid)】 ➔ 本日は全銘柄監視対象外（新規エントリー見送り、静観・資金温存推奨）\n"
         body += "----------------------------------------\n\n"
     else:
-        # 各銘柄詳細（Layer 1 〜 Layer 3 の3階層構造）
         for idx, c in enumerate(candidates, 1):
             body += f"## {idx}. {c['name']} ({c['ticker']}) {c['links']}\n"
             
@@ -287,10 +305,8 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
             body += f"  ・総合評価スコア: **{c['evaluation_score']:.1f}点** (ベース点: {c['score']} / ランク: {c['rank']})\n"
             body += f"  ・現在の監視優先: **{c['action_star']}**\n"
             
-            # ②：「昨日から何が変わったか（前日差分）」を最優先表示
             body += f"{c['diff_text']}"
             
-            # ⑥：「今日やること」のToDoリスト
             body += "  ・【今日のToDo行動指針】\n"
             for t_item in c["todo"]:
                 body += f"     {t_item}\n"
@@ -303,7 +319,6 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
             body += f"  ・信頼度(Confidence): **{c['confidence']}%** ({c['confidence_stars']}) / Type0一致率: **{c['type0_match_rate']}%** ({c['match_stars']})\n"
             body += f"  ・過去類似DNA実績 : {c['similar_stats_str']}\n"
             
-            # Avoid時の理由説明
             if "見送り" in c["action_star"]:
                 body += f"  ・{c['avoid_desc']}\n"
                 
@@ -327,8 +342,15 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
             body += f"  {c['ai_comment']}\n"
             body += "----------------------------------------\n\n"
 
-        # メールの最下部に「今日のAction Log」を配置
+        # 今日のAction Logを末尾に配置
+        action_log_str = State5ExplainableEngine.generate_action_log(candidates)
         body += f"\n{action_log_str}\n\n"
+
+    # AI Health Report の配置
+    body += "### 🏥 【AI System Health Report (Heartbeat)】\n"
+    body += "----------------------------------------\n"
+    body += f"{health_report_str}\n"
+    body += "----------------------------------------\n\n"
         
     body += "\n※本システムは未来の株価を断定・予言するものではありません。期待値の高い局面にいる銘柄を自動選別することで、人間の分析・判断時間を極限まで削減することを目的に設計されています。最終判断は必ずチャートを確認の上、ご自身の規律に従って行ってください。\n"
 
@@ -355,6 +377,9 @@ def main():
 
         candidates = []
         latest_date = None
+
+        # 【Version 8.0新設】：市場温度（State分布）の集計辞書
+        state_counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
 
         print(f"=== State 5 監視＆スコアリングシステムの稼働を開始します (対象: {len(tickers)} 銘柄) ===")
 
@@ -387,12 +412,14 @@ def main():
                 latest_row = df_sim.iloc[-1]
                 latest_state = int(latest_row["current_state"])
 
+                # 【Version 8.0新設】：すべての銘柄の最新状態（State）をリアルタイムにカウント
+                if latest_state in state_counts:
+                    state_counts[latest_state] += 1
+
                 if latest_row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
                 # --- 【本番運用仕様】：State 5 のみスキャン ---
-                # テスト実行時は、ブラウザ上でここを「if True:」に一時的に書き換えてください。
-                # 本番稼働時は「if latest_state == 5:」のままで、毎朝合格者がある日だけメールされます。
                 if latest_state == 5:
                     score, comments = score_and_comment_candidate(latest_row)
                     
@@ -492,8 +519,8 @@ def main():
         sorted_candidates = sorted(candidates, key=lambda x: x["evaluation_score"], reverse=True)
         priority_candidates = sorted_candidates[:PRIORITY_COUNT]
 
-        # 毎朝の説明可能プロファイルメール送信 (地合いを考慮)
-        notify_state5_watch(priority_candidates, latest_date, market_state)
+        # 毎朝の説明可能プロファイルメール送信 (地合いおよび市場温度、各Stateカウントを考慮)
+        notify_state5_watch(priority_candidates, latest_date, market_state, state_counts)
         
         # ==========================================
         # ★【Version 7.0】：自律学習・成績管理システムの自動フック ★
