@@ -212,10 +212,9 @@ def score_and_comment_candidate(latest_row: pd.Series) -> tuple[int, list[str]]:
 
 def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str, state_counts: dict):
     """
-    【Version 8.0：Daily Command Center 大刷新版】：
-    最上部に「Layer 0：5秒で判断できる今日の結論」を配置し、
-    0件の日の「なぜ0件なのか」の動的分析、および「市場温度（State分布）」、「AI稼働証明（Heartbeat）」、
-    「前日との比較差分」を網羅した、極限の意思決定支援テンプレート。
+    【Version 8.1：UI整合性改善版】：
+    市場全体（地合い➔温度➔比較）➔ Sniper判定（Layer 0結論➔AI解説➔ToDo➔個別詳細）という、
+    人間工学に基づく完璧な論理フローに整理整頓したレイアウト。
     """
     if not (GMAIL_USER and GMAIL_PASS and NOTIFICATION_EMAIL):
         print("警告: メールの認証情報、または通知先アドレスが未設定です。")
@@ -223,18 +222,19 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
 
     from state5_explainable_engine import State5ExplainableEngine
     
+    # ⑤：地合いの星評価と期待値の取得
     star_title, env_desc, stats_str = State5ExplainableEngine.get_market_env_expectancy_v71(market_state, config)
     
     # 0件理由の自動分析（または1件以上の時の総括）
     if not candidates:
         ai_summary_str = State5ExplainableEngine.get_zero_case_analysis(state_counts)
         subject_str = f"【State5 Watch】{date_str} 正常稼働報告（候補0件）"
-        action_decision = "待機（新規エントリーなし）"
-        decision_desc = "本日は期待値を守るための待機日です。取引をせず資金を温存することが今日の最良の利益になります。"
+        action_decision = "待機"
+        decision_desc = "本日は期待値を守るための待機日です。資金を温存することが今日の最良の利益になります。"
     else:
         ai_summary_str = State5ExplainableEngine.generate_ai_summary(candidates, market_state)
         subject_str = f"【State5 Watch】{date_str} 優先候補 {len(candidates)} 銘柄"
-        action_decision = f"監視強化（優先候補: {candidates[0]['name']}等）"
+        action_decision = f"監視（優先候補: {candidates[0]['name']}等）"
         decision_desc = f"本日、黄金仕込みのDNAを満たした銘柄が {len(candidates)} 件出現しました。ToDo指示を確認の上、チャートを監視してください。"
 
     # 昨日との差分（比較）
@@ -251,20 +251,36 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
     msg["To"] = NOTIFICATION_EMAIL
     msg["Subject"] = subject_str
 
-    # --------------------------------------------------
-    # 【Layer 0 (5秒で判断できる結論)】
-    # --------------------------------------------------
-    body = "## ━━━━━━━━━━━━━━━━━━\n"
-    body += "## 🔴 Layer 0：【今日の投資指令室（Daily Command Center）】\n"
+    # ==================================================
+    # 🔵 1. 【市場環境 ＆ データ分析】セクション
+    # ==================================================
+    body = f"# 【{DISPLAY_NAME}】{date_str} 意思決定支援レポート\n"
+    body += "※情報量よりも「人間が1分以内で監視対象を決定できること」を最優先に設計されたレポートです。\n"
+    body += "----------------------------------------\n"
+    body += f"### ■ 本日の相場環境判定: 【 {star_title} 】\n"
+    body += f"*   **地合い状況**: {env_desc}\n\n"
+    
+    body += "**【市場温度（市場全体のState分布状況）】**\n"
+    body += f"{market_temp_str}\n\n"
+    body += "**【昨日との比較】**\n"
+    body += f"{comparison_str}\n"
+    body += f"**【現在の地合いにおける、過去5,487件の実績期待値】**:\n{stats_str}\n"
+    body += "----------------------------------------\n\n"
+
+    # ==================================================
+    # 🔴 2. 【Sniper売買判定：Layer 0（5秒結論）】
+    # ==================================================
     body += "## ━━━━━━━━━━━━━━━━━━\n"
-    body += f"  ・本日の市場環境 : {star_title}\n"
-    body += f"  ・本日のState 5  : {len(candidates)} 件\n"
-    body += f"  ・今日のアクション: **【 {action_decision} 】**\n"
-    body += f"  ・AIによる判断   : {decision_desc}\n"
+    body += "## 🔴 Layer 0：【本日の最優先結論】\n"
+    body += "## ━━━━━━━━━━━━━━━━━━\n"
+    body += f"  ・市場全体の地合い : {market_state}\n"
+    body += f"  ・本日のSniper判定 : 監視対象 【 {len(candidates)} 件 】\n"
+    body += f"  ・今日の投資行動   : **【 {action_decision} 】**\n"
+    body += f"  ・AIによる判断理由 : {decision_desc}\n"
     body += "## ━━━━━━━━━━━━━━━━━━\n\n"
 
-    # AI総括（市場解説へ進化）
-    body += "### 💡 【本日の市場解説コラム（AI総括）】\n"
+    # ⑤：AI総括を「市場の背景説明」に進化
+    body += "### 💡 【本日の市場の空気感・背景説明（AI総括）】\n"
     body += f"{ai_summary_str}\n"
     body += "----------------------------------------\n\n"
 
@@ -278,16 +294,6 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
         body += "### 💡 【本日の最重要監視銘柄 TOP3 （1分要約）】\n"
         body += top3_str
         body += "----------------------------------------\n\n"
-
-    # 市場温度 ＆ 昨日との比較 ＆ AI Health
-    body += "### 📊 【市場の温度・地合いデータ（Regime）】\n"
-    body += "----------------------------------------\n"
-    body += "**【市場温度（State分布）】**\n"
-    body += f"{market_temp_str}\n\n"
-    body += "**【昨日との比較】**\n"
-    body += f"{comparison_str}\n"
-    body += f"**【現在の地合いにおける、過去5,487件の実績期待値】**:\n{stats_str}\n"
-    body += "----------------------------------------\n\n"
 
     # 個別銘柄詳細（データがある場合のみ実行：Layer 1 〜 Layer 3）
     if not candidates:
@@ -378,7 +384,7 @@ def main():
         candidates = []
         latest_date = None
 
-        # 【Version 8.0新設】：市場温度（State分布）の集計辞書
+        # 市場温度の集計辞書
         state_counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
 
         print(f"=== State 5 監視＆スコアリングシステムの稼働を開始します (対象: {len(tickers)} 銘柄) ===")
@@ -412,7 +418,6 @@ def main():
                 latest_row = df_sim.iloc[-1]
                 latest_state = int(latest_row["current_state"])
 
-                # 【Version 8.0新設】：すべての銘柄の最新状態（State）をリアルタイムにカウント
                 if latest_state in state_counts:
                     state_counts[latest_state] += 1
 
@@ -429,24 +434,24 @@ def main():
                     maturity_desc = State5ExplainableEngine.get_state5_maturity(int(latest_row["state_days"]))
                     confidence, conf_rank, overall_rank = State5ExplainableEngine.get_confidence_and_rank(score, type0_match, market_state)
                     
-                    # 【Version 7.8新設】：チャート形状・強み・注意点の自動分析
+                    # チャート形状・強み・注意点
                     chart_pattern = State5ExplainableEngine.get_chart_pattern(df_raw)
                     pros, cons = State5ExplainableEngine.get_pros_and_cons(latest_row)
                     
-                    # 【Version 7.8新設】：優先度星評価
+                    # 優先度星評価
                     action_star, action_short = State5ExplainableEngine.get_action_recommendation_v71(score, confidence, int(latest_row["state_days"]))
                     
-                    # 【Version 7.8新設】：お宝TradingView/株探/SBI証券ダイレクトリンク自動生成
+                    # ダイレクトポータルリンク
                     links_dict = State5ExplainableEngine.get_chart_links(t)
                     
-                    # 【Version 7.8新設】：過去類似統計 ＆ Avoid統計理由の自動算出
+                    # 過去類似統計 ＆ Avoid統計理由
                     similar_stats_str, sim_stats = State5ExplainableEngine.get_similar_history_stats(type0_match, market_state, config)
                     avoid_desc = State5ExplainableEngine.explain_avoid_reason(int(latest_row["state_days"]))
                     
-                    # 【Version 7.8新設】：「今日やること」のToDoリスト自動生成
+                    # 「今日やること」のToDoリスト
                     todo = State5ExplainableEngine.generate_daily_todo(latest_row, action_short, chart_pattern)
                     
-                    # 【Version 7.9新設】：「昨日から何が変わったか（前日差分）」の自動計算
+                    # 「昨日から何が変わったか（前日差分）」
                     current_data_for_diff = {
                         "score": score,
                         "vol_ratio": float(latest_row["vol_ratio_20"]),
@@ -454,7 +459,7 @@ def main():
                     }
                     diff_text = State5ExplainableEngine.get_previous_diff(t, latest_date, current_data_for_diff, config)
                     
-                    # 自然言語AIコメントにチャート形状判定と簡潔さを適用
+                    # 自然言語AIコメントにチャート形状
                     ai_comment = State5ExplainableEngine.get_natural_ai_comment(latest_row, type0_match, chart_pattern)
                     
                     # 1分要約用の簡易成熟度
@@ -471,7 +476,7 @@ def main():
                         "ticker": t,
                         "name": name_map.get(t, t),
                         "score": score,
-                        "evaluation_score": evaluation_score,  # 重み付けされた最終優先順位スコア
+                        "evaluation_score": evaluation_score,
                         "rank": overall_rank,
                         "state": latest_state,
                         "days_in_state": int(latest_row["state_days"]),
@@ -482,7 +487,7 @@ def main():
                         "vol_ratio": latest_row["vol_ratio_20"],
                         "comments": comments,
                         
-                        # 意思決定支援パラメータ
+                        # 意思決定支援
                         "chart_pattern": chart_pattern,
                         "pros": pros,
                         "cons": cons,
