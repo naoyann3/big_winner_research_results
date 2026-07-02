@@ -349,7 +349,7 @@ def main():
                     continue
 
                 # 必須判定: State 5 であること
-                if latest_state == 5:
+                if True:  # 👈 ここを「if True:」にします
                     score, comments = score_and_comment_candidate(latest_row)
                     
                     # --- 説明可能パラメータの自動算出 ---
