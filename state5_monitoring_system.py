@@ -341,9 +341,9 @@ def main():
                 if latest_row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # --- 【テスト用】：条件を if True: にして強制的に全銘柄をスコアリング ---
+                # --- 全銘柄をスコアリング ---
                 # 重複した古い判定ロジックは跡形もなく消去されました
-                if True:
+                if latest_state == 5:
                     score, comments = score_and_comment_candidate(latest_row)
                     
                     # --- 【修正点】：State5ExplainableEngine から安全にパラメータを自動算出 ---
