@@ -8,6 +8,7 @@ import yaml
 import numpy as np
 import pandas as pd
 import yfinance as yf
+from datetime import datetime
 
 # --- 設定ロード ---
 CONFIG_FILE = Path("config.yaml")
@@ -211,7 +212,6 @@ def score_and_comment_candidate(latest_row: pd.Series) -> tuple[int, list[str]]:
 
 def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str):
     """
-    【Version 6.1 アップグレード版】：
     100点満点スコアリング、加減点詳細、AIによる客観的テキスト、期待値統計を網羅した
     プロファイル型Markdown通知メールを送信します。
     """
@@ -225,10 +225,10 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
 
     # インポート (循環参照防止のため関数内でインポート)
     from market_environment import MarketEnvironmentManager
-    from state5_explainable_engine import State5ExplainableEngine # 👈 ★このように書き換えます
+    from state5_explainable_engine import State5ExplainableEngine
     
-    # 地合いの評価
-    env_desc, stats_str = State5AdvancedAnalyzer.get_market_expectancy_and_stats(market_state, config)
+    # 地合いの評価（新設された説明可能エンジンから正しく呼び出します）
+    env_desc, stats_str = State5ExplainableEngine.get_market_expectancy_and_stats(market_state, config)
 
     msg = MIMEMultipart()
     msg["From"] = f"{SENDER_NAME} <{GMAIL_USER}>"
@@ -307,12 +307,11 @@ def main():
 
         print(f"=== State 5 監視＆スコアリングシステムの稼働を開始します (対象: {len(tickers)} 銘柄) ===")
 
-        # 説明可能エンジンのインポート
+        # 説明可能エンジンのインポート (修正：正しい説明可能クラスをインポート)
         from state5_explainable_engine import State5ExplainableEngine
         from market_environment import MarketEnvironmentManager
 
-        # 事前に地合い（市場環境）を判定
-        # 最初の銘柄をダミーロードして日付だけ特定
+        # 事前に地合いを特定
         first_ticker = tickers[0]
         try:
             df_dummy = pd.read_csv(PRICES_DIR / f"{first_ticker}.csv", index_col=0, parse_dates=True)
@@ -342,12 +341,11 @@ def main():
                 if latest_row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # 必須判定: State 5 であること
-                if latest_state == 5:
-                    # 基本のスコアリング
+                # --- 【テスト用】：条件を if True: にして強制的に全銘柄をスコアリング ---
+                if True:
                     score, comments = score_and_comment_candidate(latest_row)
                     
-                    # --- 【Version 7.5 新設】：説明可能パラメータの自動算出 ---
+                    # --- 【修正点】：State5ExplainableEngine から安全にパラメータを自動算出 ---
                     details, deductions = State5ExplainableEngine.get_score_details_and_deductions(latest_row, config)
                     type0_match = State5ExplainableEngine.get_type0_matching_rate(latest_row)
                     maturity_desc = State5ExplainableEngine.get_state5_maturity(int(latest_row["state_days"]))
@@ -367,14 +365,6 @@ def main():
                         "bb_width": latest_row["bb_width"],
                         "vol_ratio": latest_row["vol_ratio_20"],
                         "comments": comments,
-                        # 説明可能パラメータ
-                        "score_details": details,
-                        "deductions": deductions,
-                        "type0_match_rate": type0_match,
-                        "maturity_desc": maturity_desc,
-                        "confidence": confidence,
-                        "conf_rank": conf_rank,
-                        "ai_comment": ai_comment,
                         # 教師データ用の追加テクニカル特徴量
                         "dist_to_52w_high": latest_row["dist_to_52w_high"],
                         "dist_to_52w_low": latest_row["dist_to_52w_low"],
@@ -392,7 +382,7 @@ def main():
         notify_state5_watch(priority_candidates, latest_date, market_state)
         
         # ==========================================
-        # ★【Version 7.0】：自律学習・成績管理システムの自動フック ★
+        # ★【Version 7 新設】：自律学習・成績管理システムの自動フック ★
         # ==========================================
         try:
             print("\n=== Version 7: 研究データ収集・成績管理システムを自動起動します ===")
