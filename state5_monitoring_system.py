@@ -81,6 +81,7 @@ class MarketStateEngine:
         d["bb_width"] = (std20 * 4) / d["ma25"] * 100
         d["bb_width_min60"] = d["bb_width"].rolling(60).min()
         
+        # ATR比率
         high_low = d["High"] - d["Low"]
         high_cp = (d["High"] - d["Close"].shift(1)).abs()
         low_cp = (d["Low"] - d["Close"].shift(1)).abs()
@@ -211,25 +212,18 @@ def score_and_comment_candidate(latest_row: pd.Series) -> tuple[int, list[str]]:
 
 def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str):
     """
-    【Version 7.9 意思決定支援・3階層レイアウト特化版】：
-    Layer 1（3秒）、Layer 2（15秒）、Layer 3（詳細）の3階層に完全に情報設計を分離。
-    メール最上部に「今日のAI総括」、最下部に「今日のAction Log」を配置。
+    【Version 7.95 意思決定支援特化版】：
+    データが0件であっても、正常にスキャンが完了した事実と地合いを報告する、
+    「正常稼働（0件）報告メール」を自動送信します。
     """
-    if not candidates:
-        print("本日のState 5優先候補は0件です。通知をスキップします。")
-        return
-
     if not (GMAIL_USER and GMAIL_PASS and NOTIFICATION_EMAIL):
         print("警告: メールの認証情報、または通知先アドレスが未設定です。")
         return
 
     from state5_explainable_engine import State5ExplainableEngine
     
-    # 地合いの星評価と期待値
+    # ⑤：地合いの星評価と期待値の取得
     star_title, env_desc, stats_str = State5ExplainableEngine.get_market_env_expectancy_v71(market_state, config)
-
-    # ④：今日の一言総括（AI総括）の自動生成
-    ai_summary_str = State5ExplainableEngine.generate_ai_summary(candidates, market_state)
 
     # ⑥：今日のAction Log（最下部のToDoチェックリスト）の自動生成
     action_log_str = State5ExplainableEngine.generate_action_log(candidates)
@@ -237,90 +231,105 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
     msg = MIMEMultipart()
     msg["From"] = f"{SENDER_NAME} <{GMAIL_USER}>"
     msg["To"] = NOTIFICATION_EMAIL
-    msg["Subject"] = f"【State5 Watch】{date_str} 優先候補 {len(candidates)} 銘柄"
+    
+    # 件名の自動分岐：0件なら稼働報告、1件以上なら優先候補として配信
+    if not candidates:
+        msg["Subject"] = f"【State5 Watch】{date_str} 正常稼働報告（候補0件）"
+    else:
+        msg["Subject"] = f"【State5 Watch】{date_str} 優先候補 {len(candidates)} 銘柄"
 
     # ヘッダー構築
     body = f"# 【{DISPLAY_NAME}】{date_str} 意思決定支援レポート\n"
     body += "※情報量よりも「人間が1分以内で監視対象を決定できること」を最優先に設計されたレポートです。\n"
     body += "----------------------------------------\n"
-    body += f"### 📝 【本日のAI総括 (200文字要約)】\n"
-    body += f"{ai_summary_str}\n"
-    body += "----------------------------------------\n"
     
-    # ⑤ 最終コメント：「本日の最重要監視銘柄TOP3」の自動生成（1分要約）
-    top3_str = ""
-    for idx, c in enumerate(candidates[:3], 1):
-        top3_str += f"  {idx}位: **{c['name']} ({c['ticker']})** ➔ 総合 {c['evaluation_score']:.1f}点 ({c['rank']}) / {c['action_star']}\n"
-        top3_str += f"        (一致率: {c['type0_match_rate']}%。{c['maturity_short_desc']}。{c['comments'][0]}等)\n"
+    if not candidates:
+        body += f"### 📝 【本日のAI総括 (200文字要約)】\n"
+        body += f"【本日の総括】: システムは本日も正常に稼働を完了しました。本日の相場環境は【 {market_state} 】ですが、全3,694銘柄の中に『State 5（黄金仕込み）』の過酷な基準に完全合致する本物の銘柄は検出されませんでした。 "
+        body += "本日は『完全な待ち（Avoid・様子見）』の日となります。無駄な取引を避け、資金を温存してください。\n"
+        body += "----------------------------------------\n\n"
+    else:
+        # ④：今日の一言総括（AI総括）の自動生成
+        ai_summary_str = State5ExplainableEngine.generate_ai_summary(candidates, market_state)
+        body += f"### 📝 【本日のAI総括 (200文字要約)】\n"
+        body += f"{ai_summary_str}\n"
+        body += "----------------------------------------\n"
+        
+        # ⑤ 最終コメント：「本日の最重要監視銘柄TOP3」の自動生成（1分要約）
+        top3_str = ""
+        for idx, c in enumerate(candidates[:3], 1):
+            top3_str += f"  {idx}位: **{c['name']} ({c['ticker']})** ➔ 総合 {c['evaluation_score']:.1f}点 ({c['rank']}) / {c['action_star']}\n"
+            top3_str += f"        (一致率: {c['type0_match_rate']}%。{c['maturity_short_desc']}。{c['comments'][0]}等)\n"
 
-    body += "### 💡 【本日の最重要監視銘柄 TOP3 （1分要約）】\n"
-    body += top3_str
-    body += "----------------------------------------\n\n"
+        body += "### 💡 【本日の最重要監視銘柄 TOP3 （1分要約）】\n"
+        body += top3_str
+        body += "----------------------------------------\n\n"
     
     body += f"### ■ 本日の相場環境判定: 【 {star_title} 】\n"
     body += f"*   **地合い状況**: {env_desc}\n"
     body += f"**【現在の地合いにおける、過去5,487件の実績期待値】**:\n{stats_str}\n"
     body += "----------------------------------------\n\n"
 
-    # 各銘柄詳細（Layer 1 〜 Layer 3 の3階層構造へ大リファクタリング）
-    for idx, c in enumerate(candidates, 1):
-        body += f"## {idx}. {c['name']} ({c['ticker']}) {c['links']}\n"
-        
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # 【Layer 1 (3秒判定エリア)】
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        body += "### ━━━━━━━━━━━━━━━━━━\n"
-        body += "### 🔴 Layer 1：本日の優先度とアクション指示\n"
-        body += "### ━━━━━━━━━━━━━━━━━━\n"
-        body += f"  ・総合評価スコア: **{c['evaluation_score']:.1f}点** (ベース点: {c['score']} / ランク: {c['rank']})\n"
-        body += f"  ・現在の監視優先: **{c['action_star']}**\n"
-        
-        # ②：「昨日から何が変わったか（前日差分）」を最優先表示
-        body += f"{c['diff_text']}"
-        
-        # ⑥：「今日やること」のToDoリスト
-        body += "  ・【今日のToDo行動指針】\n"
-        for t_item in c["todo"]:
-            body += f"     {t_item}\n"
-        body += "### ━━━━━━━━━━━━━━━━━━\n\n"
-        
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # 【Layer 2 (15秒判定エリア)】
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        body += "### 🟡 Layer 2：なぜそう判断したか（強みと注意点）\n"
-        body += f"  ・推定チャート形状: **{c['chart_pattern']}**\n"
-        body += f"  ・状態遷移成熟度  : {c['maturity_desc']}\n"
-        body += f"  ・信頼度(Confidence): **{c['confidence']}%** ({c['confidence_stars']}) / Type0一致率: **{c['type0_match_rate']}%** ({c['match_stars']})\n"
-        body += f"  ・過去類似DNA実績 : {c['similar_stats_str']}\n"
-        
-        # Avoid時の理由説明
-        if "見送り" in c["action_star"]:
-            body += f"  ・{c['avoid_desc']}\n"
-            
-        body += "\n"
-        body += "  ・【買う理由（強み）】\n"
-        for p in c["pros"]:
-            body += f"     - {p}\n"
-        body += "\n"
-        body += "  ・【注意点（弱み）】\n"
-        for con in c["cons"]:
-            body += f"     * {con}\n"
-        body += "\n"
-        
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # 【Layer 3 (詳細データエリア - 必要時のみ確認)】
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        body += "### 🔵 Layer 3：詳細データ・AIコメント\n"
-        body += f"  [基本データ]: 終値: {c['close']:.1f} 円 (MA75乖離: {c['ma75_dev']:+.1f}%) / RSI(14): {c['rsi14']:.1f}% / BB幅: {c['bb_width']:.1f}%\n"
-        body += "  [獲得加点内訳 (獲得点数 / 配点)]:\n"
-        for item, (gain, max_p) in c["score_details"].items():
-            body += f"     - {item:12s}: {gain:2d} / {max_p:2d}\n"
-        body += "\n"
-        body += f"  {c['ai_comment']}\n"
+    # 銘柄の表示（データがある場合のみ実行）
+    if not candidates:
+        body += "## 💡 【今日のAction (本日やることチェックリスト)】\n"
+        body += "  ☑ 【見送り (Avoid)】 ➔ 本日は全銘柄監視対象外（新規エントリー見送り、静観・資金温存推奨）\n"
         body += "----------------------------------------\n\n"
+    else:
+        # 各銘柄詳細（Layer 1 〜 Layer 3 の3階層構造）
+        for idx, c in enumerate(candidates, 1):
+            body += f"## {idx}. {c['name']} ({c['ticker']}) {c['links']}\n"
+            
+            # 【Layer 1 (3秒判定エリア)】
+            body += "### ━━━━━━━━━━━━━━━━━━\n"
+            body += "### 🔴 Layer 1：本日の優先度とアクション指示\n"
+            body += "### ━━━━━━━━━━━━━━━━━━\n"
+            body += f"  ・総合評価スコア: **{c['evaluation_score']:.1f}点** (ベース点: {c['score']} / ランク: {c['rank']})\n"
+            body += f"  ・現在の監視優先: **{c['action_star']}**\n"
+            
+            # ②：「昨日から何が変わったか（前日差分）」を最優先表示
+            body += f"{c['diff_text']}"
+            
+            # ⑥：「今日やること」のToDoリスト
+            body += "  ・【今日のToDo行動指針】\n"
+            for t_item in c["todo"]:
+                body += f"     {t_item}\n"
+            body += "### ━━━━━━━━━━━━━━━━━━\n\n"
+            
+            # 【Layer 2 (15秒判定エリア)】
+            body += "### 🟡 Layer 2：なぜそう判断したか（強みと注意点）\n"
+            body += f"  ・推定チャート形状: **{c['chart_pattern']}**\n"
+            body += f"  ・状態遷移成熟度  : {c['maturity_desc']}\n"
+            body += f"  ・信頼度(Confidence): **{c['confidence']}%** ({c['confidence_stars']}) / Type0一致率: **{c['type0_match_rate']}%** ({c['match_stars']})\n"
+            body += f"  ・過去類似DNA実績 : {c['similar_stats_str']}\n"
+            
+            # Avoid時の理由説明
+            if "見送り" in c["action_star"]:
+                body += f"  ・{c['avoid_desc']}\n"
+                
+            body += "\n"
+            body += "  ・【買う理由（強み）】\n"
+            for p in c["pros"]:
+                body += f"     - {p}\n"
+            body += "\n"
+            body += "  ・【注意点（弱み）】\n"
+            for con in c["cons"]:
+                body += f"     * {con}\n"
+            body += "\n"
+            
+            # 【Layer 3 (詳細データエリア - 必要時のみ確認)】
+            body += "### 🔵 Layer 3：詳細データ・AIコメント\n"
+            body += f"  [基本データ]: 終値: {c['close']:.1f} 円 (MA75乖離: {c['ma75_dev']:+.1f}%) / RSI(14): {c['rsi14']:.1f}% / BB幅: {c['bb_width']:.1f}%\n"
+            body += "  [獲得加点内訳 (獲得点数 / 配点)]:\n"
+            for item, (gain, max_p) in c["score_details"].items():
+                body += f"     - {item:12s}: {gain:2d} / {max_p:2d}\n"
+            body += "\n"
+            body += f"  {c['ai_comment']}\n"
+            body += "----------------------------------------\n\n"
 
-    # メールの最下部に「今日のAction Log」を配置
-    body += f"\n{action_log_str}\n\n"
+        # メールの最下部に「今日のAction Log」を配置
+        body += f"\n{action_log_str}\n\n"
+        
     body += "\n※本システムは未来の株価を断定・予言するものではありません。期待値の高い局面にいる銘柄を自動選別することで、人間の分析・判断時間を極限まで削減することを目的に設計されています。最終判断は必ずチャートを確認の上、ご自身の規律に従って行ってください。\n"
 
     msg.attach(MIMEText(body, "plain", "utf-8"))
@@ -381,7 +390,9 @@ def main():
                 if latest_row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # --- 【本番運用仕様に戻しました】：State 5 のみスキャン ---
+                # --- 【本番運用仕様】：State 5 のみスキャン ---
+                # テスト実行時は、ブラウザ上でここを「if True:」に一時的に書き換えてください。
+                # 本番稼働時は「if latest_state == 5:」のままで、毎朝合格者がある日だけメールされます。
                 if latest_state == 5:
                     score, comments = score_and_comment_candidate(latest_row)
                     
