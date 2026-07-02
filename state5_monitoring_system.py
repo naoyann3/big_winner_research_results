@@ -227,7 +227,7 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
     from market_environment import MarketEnvironmentManager
     from state5_explainable_engine import State5ExplainableEngine
     
-    # 地合いの評価（新設された説明可能エンジンから正しく呼び出します）
+    # 地合いの評価
     env_desc, stats_str = State5ExplainableEngine.get_market_expectancy_and_stats(market_state, config)
 
     msg = MIMEMultipart()
@@ -307,7 +307,7 @@ def main():
 
         print(f"=== State 5 監視＆スコアリングシステムの稼働を開始します (対象: {len(tickers)} 銘柄) ===")
 
-        # 説明可能エンジンのインポート (修正：正しい説明可能クラスをインポート)
+        # 説明可能エンジンのインポート
         from state5_explainable_engine import State5ExplainableEngine
         from market_environment import MarketEnvironmentManager
 
@@ -342,6 +342,7 @@ def main():
                     continue
 
                 # --- 【テスト用】：条件を if True: にして強制的に全銘柄をスコアリング ---
+                # 重複した古い判定ロジックは跡形もなく消去されました
                 if True:
                     score, comments = score_and_comment_candidate(latest_row)
                     
@@ -365,6 +366,14 @@ def main():
                         "bb_width": latest_row["bb_width"],
                         "vol_ratio": latest_row["vol_ratio_20"],
                         "comments": comments,
+                        # 説明可能パラメータ
+                        "score_details": details,
+                        "deductions": deductions,
+                        "type0_match_rate": type0_match,
+                        "maturity_desc": maturity_desc,
+                        "confidence": confidence,
+                        "conf_rank": conf_rank,
+                        "ai_comment": ai_comment,
                         # 教師データ用の追加テクニカル特徴量
                         "dist_to_52w_high": latest_row["dist_to_52w_high"],
                         "dist_to_52w_low": latest_row["dist_to_52w_low"],
