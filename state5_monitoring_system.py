@@ -176,22 +176,22 @@ def score_and_comment_candidate(latest_row: pd.Series) -> tuple[int, list[str]]:
     vol_ratio = latest_row["vol_ratio_20"]
     if vol_ratio <= TH_VOL_LIMIT:
         score += WEIGHT_VOL_SHRINK
-        comments.append("出来高収縮継続")
+        comments.append("出来高収縮完成")
     
     bb_width = latest_row["bb_width"]
     if bb_width <= TH_BB_LIMIT:
         score += WEIGHT_BB_SHRINK
-        comments.append("ボラティリティ低下")
+        comments.append("BB収縮完成")
     
     rsi14 = latest_row["rsi14"]
     if TH_RSI_MIN <= rsi14 <= TH_RSI_MAX:
         score += WEIGHT_RSI
-        comments.append("RSI適正")
+        comments.append("RSI中立")
     
     dist_52w = latest_row["dist_to_52w_high"]
     if abs(dist_52w) <= 20.0:
         score += WEIGHT_DIST_52W
-        comments.append(f"52週高値まで {abs(dist_52w):.1f}%")
+        comments.append(f"52週高値近接")
     
     ma25 = latest_row["ma25"]
     ma75 = latest_row["ma75"]
@@ -211,7 +211,7 @@ def score_and_comment_candidate(latest_row: pd.Series) -> tuple[int, list[str]]:
 
 def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str):
     """
-    【Version 7.6 意思決定支援特化版】：
+    【Version 7.7 意思決定支援特化版】：
     1分以内の状況把握を最優先し、行動推奨、強み・注意点の簡潔な箇条書き、
     および「本日の最重要監視TOP3」を最上部に配置したプロファイルレポートを送信します。
     """
@@ -257,11 +257,28 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
         stars = "★" * max(1, int(c["score"] / 20))
         body += f"## {idx}. {c['name']} ({c['ticker']})\n"
         body += f"### 【評価】: {c['score']}点 (ランク: {c['rank']}) ➔ 【 {c['action']} 】\n"
-        body += f"**信頼度 (Confidence): {c['confidence']}% (ランク: {c['conf_rank']}) / Type 0一致率: {c['type0_match_rate']}%**\n\n"
+        body += f"**信頼度 (Confidence): {c['confidence']}% (ランク: {c['conf_rank']}) / Type 0一致率: {c['type0_match_rate']}%**\n"
+        body += f"**類似過去統計 ➔ {c['similar_stats_str']}**\n"
         
-        # チャート形状
-        body += f"*   **推定チャート形状**: **{c['chart_pattern']}**\n"
-        body += f"*   **状態遷移成熟度**: {c['maturity_desc']}\n\n"
+        # Avoid時の理由説明
+        if "見送り" in c["action"]:
+            body += f"\n{c['avoid_desc']}\n"
+            
+        body += "\n"
+        
+        # ⑤ 最優先監視理由
+        body += "**【最優先監視理由】**\n"
+        body += f"  ・Type0一致率: {c['type0_match_rate']}%\n"
+        body += f"  ・出来高収縮（売り枯れ）: 20日平均の {c['vol_ratio']:.2f}倍 まで完了\n"
+        body += f"  ・成熟度: {c['state_days']}日熟成\n"
+        body += f"  ・市場相場環境: {market_state}相場 (勝率 {c['similar_win']:.1f}%)\n"
+        body += "\n"
+        
+        # ⑥ 「今日やること」のToDoリスト
+        body += "**【今日のToDo行動】**\n"
+        for t_item in c["todo"]:
+            body += f"  {t_item}\n"
+        body += "\n"
         
         # ② 強み（買う理由）＆ 注意点（弱み）を簡潔に
         body += "**【買う理由（強み）】**\n"
@@ -274,9 +291,9 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
             body += f"  * {con}\n"
         body += "\n"
         
-        # 基本データ
-        body += "【基本テクニカル】\n"
-        body += f"  終値: {c['close']:.1f} 円 (MA75乖離: {c['ma75_dev']:+.1f}%) / RSI(14): {c['rsi14']:.1f}% / BB幅: {c['bb_width']:.1f}% / 出来高比率: {c['vol_ratio']:.2f}倍\n\n"
+        # 基本データと形状
+        body += f"  [形状]: {c['chart_pattern']} (成熟度: {c['maturity_desc']})\n"
+        body += f"  [データ]: 終値: {c['close']:.1f} 円 (MA75乖離: {c['ma75_dev']:+.1f}%) / RSI(14): {c['rsi14']:.1f}% / BB幅: {c['bb_width']:.1f}%\n\n"
         
         # スコア内訳
         body += "【加点内訳 (獲得点数 / 配点)】\n"
@@ -348,8 +365,8 @@ def main():
                 if latest_row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # 必須判定: State 5 であること
-                if latest_state == 5: 
+                # --- 【本番運用仕様に戻しました】：State 5 のみスキャン ---
+                if latest_state == 5:
                     score, comments = score_and_comment_candidate(latest_row)
                     
                     # --- 説明可能パラメータの自動算出 ---
@@ -358,16 +375,22 @@ def main():
                     maturity_desc = State5ExplainableEngine.get_state5_maturity(int(latest_row["state_days"]))
                     confidence, conf_rank, overall_rank = State5ExplainableEngine.get_confidence_and_rank(score, type0_match, market_state)
                     
-                    # 【Version 7.6新設】：チャート形状自動分析
+                    # 【Version 7.7新設】：チャート形状自動分析
                     chart_pattern = State5ExplainableEngine.get_chart_pattern(df_raw)
                     
-                    # 【Version 7.6新設】：買う理由（強み）＆ 注意点（弱み）を自動抽出
+                    # 【Version 7.7新設】：買う理由（強み）＆ 注意点（弱み）を自動抽出
                     pros, cons = State5ExplainableEngine.get_pros_and_cons(latest_row)
                     
-                    # 【Version 7.6新設】：行動推奨（4段階）
+                    # 【Version 7.7新設】：行動推奨（4段階）
                     action = State5ExplainableEngine.get_action_recommendation(score, confidence, int(latest_row["state_days"]))
                     
-                    # 自然言語AIコメントにチャート形状判定を統合
+                    # 【Version 7.7新設】：類似過去統計 ＆ Avoid統計理由の自動算出
+                    similar_stats_str, sim_stats, avoid_desc = State5ExplainableEngine.get_similar_history_stats(type0_match, market_state, config)
+                    
+                    # 【Version 7.7新設】：「今日やること」のToDoリスト自動生成
+                    todo = State5ExplainableEngine.generate_daily_todo(latest_row, action, chart_pattern)
+                    
+                    # 自然言語AIコメントにチャート形状判定と簡潔さを適用
                     ai_comment = State5ExplainableEngine.get_natural_ai_comment(latest_row, type0_match, chart_pattern)
                     
                     # 1分要約用の簡易成熟度
@@ -392,12 +415,16 @@ def main():
                         "vol_ratio": latest_row["vol_ratio_20"],
                         "comments": comments,
                         
-                        # 7.6 新設の意思決定支援パラメータ
+                        # 7.7 新設の意思決定支援パラメータ
                         "chart_pattern": chart_pattern,
                         "pros": pros,
                         "cons": cons,
                         "action": action,
                         "maturity_short_desc": maturity_short_desc,
+                        "similar_stats_str": similar_stats_str,
+                        "similar_win": sim_stats["win_rate"],
+                        "avoid_desc": avoid_desc,
+                        "todo": todo,
                         
                         # 説明可能パラメータ
                         "score_details": details,
