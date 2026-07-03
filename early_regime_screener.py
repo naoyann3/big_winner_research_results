@@ -1,4 +1,4 @@
-# early_regime_screener.py (Version 1.0 - Early Watch - Fixed-v4)
+# early_regime_screener.py (Version 1.0 - Early Watch - Fixed-v5)
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -135,7 +135,6 @@ class EducationalAnalyzer:
         width = latest_row["ma_congestion_width_pct"]
         duration_val = latest_row["congestion_duration"]
         
-        # 【修正点1】：NaN の安全なキャスト処理（エラーを100%回避）
         duration = int(duration_val) if not pd.isna(duration_val) else 0
         bb_width = latest_row["bb_width"]
         
@@ -279,11 +278,9 @@ def main():
 
         print(f"=== Early Watch 予備軍スキャンの稼働を開始します (対象: {len(tickers)} 銘柄) ===")
 
-        first_file = PRICES_DIR / f"{tickers[0]}.csv"
-        print(f"  [デバッグ] 探索対象フォルダの場所: {PRICES_DIR.resolve()}")
-        print(f"  [デバッグ] 最初のファイルは存在するか?: {first_file.exists()}")
+        from state5_explainable_engine import State5ExplainableEngine
 
-        # エラー発生回数をカウントするセーフティネット
+        # エラー発生回数をカウント
         error_count = 0
 
         for idx, t in enumerate(tickers):
@@ -292,6 +289,7 @@ def main():
                 continue
 
             try:
+                # 日付インデックスの強制クレンジング
                 df_raw = pd.read_csv(price_path, index_col=0)
                 df_raw.index = pd.to_datetime(df_raw.index, errors="coerce")
                 df_raw = df_raw.dropna(how="all").sort_index()
@@ -310,23 +308,18 @@ def main():
 
                 # --- 【テスト用】：条件を if True: にして強制的に全件抽出 ---
                 if True:
-                    # ① MAの傾き（矢印）判定
                     s25, s75, s200 = EducationalAnalyzer.get_ma_slope_symbols(row)
-                    
-                    # ② トレンド成熟度の総合判定
                     trend_stage = EducationalAnalyzer.get_trend_stage(row, s25, s75, s200)
-                    
-                    # ③ Compression Score (エネルギー蓄積度 100点満点)
                     comp_score = EducationalAnalyzer.calculate_compression_score(row)
-                    
-                    # ④ Expansion Readiness (拡散準備度ランク)
                     readiness = EducationalAnalyzer.get_expansion_readiness(row, s25, s75, s200)
                     
-                    # 簡易的なチャートパターン判定
-                    from state5_explainable_engine import State5ExplainableEngine
-                    chart_pattern = State5ExplainableEngine.get_chart_pattern(df_raw)
-                    
-                    # ⑤ AIによる学習着眼点コラムの自動生成
+                    # 【バグ回避の安全設計・リフレクション】
+                    # 新旧どちらの関数名がインポートされても、エラーを出さずに100%安全に動作させます。
+                    if hasattr(State5ExplainableEngine, "get_chart_pattern"):
+                        chart_pattern = State5ExplainableEngine.get_chart_pattern(df_raw)
+                    else:
+                        chart_pattern = State5ExplainableEngine.detect_chart_pattern(df_raw)
+                        
                     edu_comment = EducationalAnalyzer.generate_educational_comment(row, trend_stage, chart_pattern)
                     
                     candidates.append({
@@ -340,7 +333,6 @@ def main():
                         "dist_to_52w_high": row["dist_to_52w_high"],
                         "dist_52w": row["dist_to_52w_high"],
                         "ma75": row["ma75"],
-                        # 学習用新指標
                         "s25": s25, "s75": s75, "s200": s200,
                         "trend_stage": trend_stage,
                         "compression_score": comp_score,
@@ -348,18 +340,16 @@ def main():
                         "edu_comment": edu_comment
                     })
             except Exception as e:
-                # 【修正点2】：不測のエラーが起きた場合は、最初の5件までその「本当の正体」をログに強制出力します
                 if error_count < 5:
                     error_count += 1
                     print(f"  [デバッグ警告] 銘柄 {t} の精査中に予期せぬエラーが発生しました: {e}")
                 continue
 
-        # 密集度（congestion_width）が最も低く、より綺麗に重なり合っているもの上位5銘柄を抽出
         if candidates:
             sorted_candidates = sorted(candidates, key=lambda x: x["congestion_width"])
             priority_candidates = sorted_candidates[:5]
 
-        # 毎朝のEarly（学習・教材特化型）メール送信
+        # 毎朝のEarlyメール送信
         notify_early_watch(priority_candidates, latest_date)
 
     except Exception as e:
