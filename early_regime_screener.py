@@ -167,7 +167,7 @@ def main():
                 if row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # 予備軍の厳格な定義
+                # 予備軍の定義（すでに25日線が上を向いている収縮銘柄もすべてスコアリング対象にします）
                 if (
                     row["ma_congestion_width_pct"] <= 5.0
                     and row["ma25_slope"] > 0
