@@ -306,8 +306,12 @@ def main():
                 if row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # --- 【テスト用】：条件を if True: にして強制的に全件抽出 ---
-                if True:
+                # --- 【本番運用仕様に戻しました】：移動平均密集・転換初日のみスキャン ---
+                if (
+                    row["ma_congestion_width_pct"] <= 5.0 
+                    and row["ma25_slope"] > 0 
+                    and row["ma25_slope_prev"] <= 0
+                ):  # 👈 ★このように書き換えます
                     s25, s75, s200 = EducationalAnalyzer.get_ma_slope_symbols(row)
                     trend_stage = EducationalAnalyzer.get_trend_stage(row, s25, s75, s200)
                     comp_score = EducationalAnalyzer.calculate_compression_score(row)
