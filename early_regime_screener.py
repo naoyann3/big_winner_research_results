@@ -1,4 +1,4 @@
-# early_regime_screener.py (Version 1.0 - Early Watch - Debug-v3)
+# early_regime_screener.py (Version 1.0 - Early Watch - Fixed-v3)
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -30,6 +30,9 @@ SENDER_NAME = "Sniper OS - Early Watch"
 
 UNIVERSE_CSV = Path("universe.csv")
 PRICES_DIR = Path("data_cache/prices")
+
+# 【修正・追加】：設定ファイルから売買代金しきい値（デフォルト1,000万円）を正しくロードします
+TH_MIN_TURNOVER = config.get("thresholds", {}).get("min_daily_turnover_million", 10.0)
 
 
 def normalize_ticker(raw: str) -> str:
@@ -191,7 +194,7 @@ def main():
                         "ma75": row["ma75"]
                     })
             except Exception as e:
-                # 【Version 7.95デバッグ新設】：最初の3件のエラー内容をログに強制出力します
+                # 【デバッグ用】：最初の3件のエラー内容をログに強制出力します
                 if error_count < 3:
                     error_count += 1
                     print(f"  [デバッグエラーログ] 銘柄 {t} のスキャン中に例外が発生しました: {e}")
