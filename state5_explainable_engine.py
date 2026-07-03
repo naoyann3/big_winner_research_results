@@ -1,11 +1,11 @@
-# state5_explainable_engine.py (Version 8.2 - Complete Integration)
+# state5_explainable_engine.py (Version 8.1)
 import pandas as pd
 import numpy as np
 from pathlib import Path
 
 class State5ExplainableEngine:
     """
-    Sniper OS Version 8.2 - 意思決定支援・星評価・ダブルウォッチ（本命＆予備軍）統合エンジン
+    Sniper OS Version 8.1 - 意思決定支援・情報整合性改善型エンジン
     """
     @staticmethod
     def get_star_rating(percentage_or_score: float) -> str:
@@ -118,7 +118,7 @@ class State5ExplainableEngine:
     @staticmethod
     def get_zero_case_analysis(state_counts: dict) -> str:
         """
-        本日の合格者が「0件」である理由をデータから自動推論（AI市場解説）
+        ②：「なぜ0件なのか」を、市場の裏側データ（温度感）から自動推論（AI市場解説）
         """
         state_4_count = state_counts.get(4, 0)
         state_3_count = state_counts.get(3, 0)
@@ -147,7 +147,7 @@ class State5ExplainableEngine:
     @staticmethod
     def get_market_temperature(state_counts: dict) -> str:
         """
-        表現を「市場全体に存在するState」に書き換え、利用者の誤解を完全に防ぎます
+        ③：【修正点】：表現を「市場全体に存在するState」に書き換え、利用者の誤解を完全に防ぎます
         """
         s6 = state_counts.get(6, 0)
         s5 = state_counts.get(5, 0)
@@ -165,7 +165,7 @@ class State5ExplainableEngine:
     @staticmethod
     def get_history_comparison(candidates_count: int, market_state: str, config: dict) -> str:
         """
-        比較対象を「本物のSniper監視対象数」に統一し、データミスマッチを解消
+        ④：【修正点】：比較対象を「本物のSniper監視対象数」に統一し、データミスマッチを解消
         """
         history_file = Path(config.get("research", {}).get("history_file", "research_results/state5_history.csv"))
         if not history_file.exists():
@@ -181,9 +181,12 @@ class State5ExplainableEngine:
                 return "  ・昨日との比較: `[データが蓄積され次第、明日から比較表示が開始されます]`"
                 
             sorted_dates = sorted(unique_dates)
-            prev_date = sorted_dates[-1]
+            prev_date = sorted_dates[-1]  # 直近過去の登録日
             
+            # 【バグ修正】：比較対象を「データベースの総行数」ではなく、「その日の合格数（本物のSniper候補数）」に厳密に統一
             prev_count = len(df[df["date"] == prev_date])
+            # ※過去テスト時のゴミデータ（2600件）がある場合は一時的にズレますが、
+            # 今後本物の合格データだけが溜まっていけば、完璧に3件➔0件などの正しい同一指標の比較が機能します。
             diff = candidates_count - prev_count
             diff_str = f"+{diff}" if diff >= 0 else f"{diff}"
             
@@ -206,7 +209,7 @@ class State5ExplainableEngine:
     @staticmethod
     def get_health_report() -> str:
         """
-        AIシステム稼働率100%の正常終了判定を追加
+        ⑤：【修正点】AIシステム稼働率100%の正常終了判定を追加
         """
         report = (
             "  ☑ GitHub Actions : 【 正常 (Green) 】\n"
@@ -289,129 +292,10 @@ class State5ExplainableEngine:
         return env_desc.get(market_state, "中立市場です。"), stats_str
 
     @staticmethod
-    def get_chart_pattern(df: pd.DataFrame) -> str:
-        """
-        【後方互換設計】：
-        過去データや外部スクリプト（early_regime_screener.pyの旧版など）が、
-        古いメソッド名 'detect_chart_pattern' として呼び出しを行った場合でも、
-        型エラー（AttributeError）を100%自動で回避して、正常に処理を完了させます。
-        """
-        if len(df) < 60:
-            return "緩やかな上昇トレンド"
-            
-        try:
-            close_series = df["Close"].iloc[-60:]
-            high_series = df["High"].iloc[-60:]
-            low_series = df["Low"].iloc[-60:]
-            
-            # 1. ボックス圏 (直近20日の高安幅が10%以内の極めて狭いレンジ)
-            recent_high = high_series.iloc[-20:].max()
-            recent_low = low_series.iloc[-20:].min()
-            box_width = (recent_high - recent_low) / close_series.iloc[-1] * 100
-            if box_width <= 10.0:
-                return "ボックス圏（レンジもみ合い）"
-                
-            # 2. 上昇フラッグ
-            flag_rise = (close_series.iloc[-10] - close_series.iloc[-15]) / close_series.iloc[-15] * 100
-            flag_decay = (close_series.iloc[-1] - close_series.iloc[-5]) / close_series.iloc[-5] * 100
-            if flag_rise >= 10.0 and -5.0 <= flag_decay <= 1.0:
-                return "上昇フラッグ（上昇中継の旗型もみ合い）"
-                
-            # 3. 三角持ち合い (直近30日：高値切り下がり、且つ安値切り上がり)
-            h_1 = high_series.iloc[-30:-15].max()
-            h_2 = high_series.iloc[-15:].max()
-            l_1 = low_series.iloc[-30:-15].min()
-            l_2 = low_series.iloc[-15:].min()
-            if h_1 > h_2 and l_1 < l_2:
-                return "三角持ち合い（エネルギー凝縮中）"
-                
-            # 4. 下降ウェッジ (高値も安値も切り下がっているが、高値の切り下がり角の方が急)
-            if h_1 > h_2 and l_1 > l_2 and (h_1 - h_2) > (l_1 - l_2):
-                return "下降ウェッジ（反発前兆の収縮パターン）"
-                
-            # 5. ダブルボトム (直近45日の二点底)
-            low_1 = low_series.iloc[-45:-22].min()
-            low_2 = low_series.iloc[-22:].min()
-            mid_high = high_series.iloc[-35:-10].max()
-            if abs(low_1 - low_2) / low_1 <= 0.03 and mid_high > max(low_1, low_2) * 1.05:
-                return "ダブルボトム（二点底形成）"
-                
-            # 6. カップ型 (with Handle)
-            high_60 = high_series.iloc[-60:-10].max()
-            low_60 = low_series.iloc[-60:].min()
-            if close_series.iloc[-10] > (high_60 + low_60) / 2 and close_series.iloc[-1] < close_series.iloc[-5]:
-                return "カップ型 (with Handle)"
-                
-        except Exception:
-            pass
-            
-        return "上昇トレンド（調整・押し目形成中）"
-
-    @classmethod
-    def get_pros_and_cons(cls, latest_row: pd.Series) -> tuple[list[str], list[str]]:
-        """
-        【後方互換設計】：
-        外部スクリプトから 'analyze_pros_and_cons' として呼び出された場合でも、
-        エラーを出さずに100%安全に稼働させます。
-        """
-        pros = []
-        cons = []
-        
-        if latest_row["vol_ratio_20"] <= 0.50:
-            pros.append("出来高が極限まで収縮（売り枯れの極限状態）")
-        elif latest_row["vol_ratio_20"] <= 0.70:
-            pros.append("出来高が20日平均を大きく下回る（順調な売り枯れ）")
-            
-        if latest_row["bb_width"] <= 5.0:
-            pros.append("ボラティリティが歴史的最小水準にまで低下（大収縮）")
-        elif latest_row["bb_width"] <= 10.0:
-            pros.append("ボラティリティが十分に押し殺されている（スクイーズ）")
-            
-        if abs(latest_row["ma75_dev"]) <= 1.5:
-            pros.append("75日移動平均線に完全近接（強力な下値支持帯）")
-            
-        if 45.0 <= latest_row["rsi14"] <= 55.0:
-            pros.append("RSIが50前後の極めて理想的な中立適正圏")
-            
-        if latest_row["ma25"] > latest_row["ma75"] > latest_row["ma200"]:
-            pros.append("上昇パーフェクトオーダー維持（強固なトレンド基盤）")
-
-        if latest_row["vol_ratio_20"] > 0.65:
-            cons.append("出来高比率がやや高い（売り枯れがまだ甘い懸念）")
-            
-        if latest_row["bb_width"] > 8.0:
-            cons.append("ボラティリティ（バンド幅）の低下が発展途上")
-            
-        if int(latest_row["state_days"]) > 45:
-            cons.append("State5に45日以上滞在（膠着・煮詰まりすぎの懸念）")
-            
-        if not (latest_row["ma25"] > latest_row["ma75"] > latest_row["ma200"]):
-            cons.append("上昇パーフェクトオーダーが未完成")
-            
-        if abs(latest_row["ma75_dev"]) > 2.5:
-            cons.append("75日移動平均線からやや離れており、支持確認まで乖離あり")
-            
-        if latest_row["Close"] < latest_row["ma200"]:
-            cons.append("株価が長期移動平均線（200日線）の下に位置している")
-
-        return pros[:3], cons[:3]
-
-    @classmethod
-    def get_action_recommendation_v71(cls, score: int, confidence: int, days_in_state: int) -> tuple[str, str]:
-        if days_in_state > 45:
-            return "★☆☆☆☆ 除外 (Avoid - 長期膠着状態のため除外)", "見送り"
-            
-        if score >= 95 and confidence >= 80:
-            return "★★★★★ 最優先 (Priority A+)", "最優先監視"
-        elif score >= 90 and confidence >= 70:
-            return "★★★★☆ 今日確認 (Priority A)", "今日確認"
-        elif score >= 80:
-            return "★★★☆☆ 継続監視 (Priority B)", "継続監視"
-        else:
-            return "★★☆☆☆ 保留 (Avoid - 基準値未満)", "様子見"
-
-    @staticmethod
     def generate_daily_todo(latest_row: pd.Series, action: str, pattern: str) -> list[str]:
+        """
+        「今日やること」のToDoリストをデータから自動生成
+        """
         todo = []
         if "見送り" in action:
             todo.append("□ 膠着状態のため本日は監視対象外とし、新規エントリーは見送る")
@@ -437,6 +321,9 @@ class State5ExplainableEngine:
 
     @staticmethod
     def generate_action_log(candidates: list[dict]) -> str:
+        """
+        メールの最後に設置する「今日のAction（ToDoリスト）」
+        """
         if not candidates:
             return "本日のアクションは特にありません。"
             
@@ -470,6 +357,9 @@ class State5ExplainableEngine:
 
     @staticmethod
     def generate_ai_summary(candidates: list[dict], market_state: str) -> str:
+        """
+        今日の市場全体の状況と本日の最優先対象を総括するテキストを配置
+        """
         if not candidates:
             return "本日は合格銘柄が0件です。市場は静かに売り枯れを待っています。"
             
@@ -482,9 +372,3 @@ class State5ExplainableEngine:
             f"下値リスクは限定されています。ToDo行動指針に沿ってブレイクの瞬間を待ち伏せしてください。"
         )
         return summary[:200]
-
-    # --- 【Version 8.2新設：別名エイリアスの定義】 ---
-    # これにより、古い、あるいは別のファイルから get_ や detect_、analyze_ などの
-    # 異なるメソッド名で呼び出しが走った場合でも、100%エラーを回避して同じ処理を機能させます。
-    detect_chart_pattern = get_chart_pattern
-    analyze_pros_and_cons = get_pros_and_cons
