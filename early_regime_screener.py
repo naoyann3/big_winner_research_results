@@ -1,4 +1,4 @@
-# early_regime_screener.py (Version 7.2 - Educational Quant)
+# early_regime_screener.py (Version 1.0 - Early Watch - Fixed-v4)
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -52,7 +52,7 @@ class EarlyStateEngine:
         d["ma75"] = d["Close"].rolling(75).mean()
         d["ma200"] = d["Close"].rolling(200).mean()
         
-        # 移動平均の傾き（直近5営業日の変化率 %）
+        # 25日線の傾き（直近5日比）
         d["ma25_slope"] = d["ma25"].pct_change(5) * 100
         d["ma75_slope"] = d["ma75"].pct_change(5) * 100
         d["ma200_slope"] = d["ma200"].pct_change(5) * 100
@@ -93,14 +93,12 @@ class EarlyStateEngine:
 
 class EducationalAnalyzer:
     """
-    ①〜⑤：Version 7.2新設の「学習価値を高めるための評価パラメータ」算出クラス
+    学習価値を高めるための評価パラメータ算出クラス
     """
     @staticmethod
     def get_ma_slope_symbols(latest_row: pd.Series) -> tuple[str, str, str]:
-        """
-        ①：Moving Average Trend Score (MAの傾き・矢印判定)
-        """
         def get_symbol(slope):
+            if pd.isna(slope): return "→"
             if slope > 0.1: return "↑"
             elif slope < -0.1: return "↓"
             else: return "→"
@@ -112,9 +110,6 @@ class EducationalAnalyzer:
 
     @staticmethod
     def get_trend_stage(latest_row: pd.Series, s25: str, s75: str, s200: str) -> str:
-        """
-        ②：トレンド成熟度の総合分類
-        """
         close = latest_row["Close"]
         ma25 = latest_row["ma25"]
         ma75 = latest_row["ma75"]
@@ -134,11 +129,14 @@ class EducationalAnalyzer:
     @staticmethod
     def calculate_compression_score(latest_row: pd.Series) -> int:
         """
-        ③：Compression Score (エネルギー蓄積度の100点満点評価)
+        Compression Score (エネルギー蓄積度 100点満点評価)
         """
         score = 0
         width = latest_row["ma_congestion_width_pct"]
-        duration = int(latest_row["congestion_duration"])
+        duration_val = latest_row["congestion_duration"]
+        
+        # 【修正点1】：NaN の安全なキャスト処理（エラーを100%回避）
+        duration = int(duration_val) if not pd.isna(duration_val) else 0
         bb_width = latest_row["bb_width"]
         
         # 1. 密集度 (最大40点)
@@ -164,39 +162,36 @@ class EducationalAnalyzer:
     @staticmethod
     def get_expansion_readiness(latest_row: pd.Series, s25: str, s75: str, s200: str) -> str:
         """
-        ④：Expansion Readiness (上方向への拡散準備度：S, A, B, C)
+        Expansion Readiness (上方向への拡散準備度：S, A, B, C)
         """
         close = latest_row["Close"]
         ma25 = latest_row["ma25"]
         ma75 = latest_row["ma75"]
         ma200 = latest_row["ma200"]
         
-        # Sクラス：25MAが上向き反転、且つ75MA・200MAが下げ止まっており、価格が移動平均の上にある
         if s25 == "↑" and s75 in ["↑", "→"] and close > ma75:
             return "S (極上：本上抜けカウントダウン状態)"
-        # Aクラス：25MAは上向き、且つ価格が25日線の上にあるが、長期の200MAがまだ下向き
         elif s25 == "↑" and close > ma25:
             return "A (良好：トレンド発生の兆候あり)"
-        # Bクラス：3本移動平均は収縮しているが、25MAがまだ「横ばい(→)」で動き出していない
         elif s25 == "→" and latest_row["ma_congestion_width_pct"] <= 5.0:
             return "B (待機：エネルギー充填中で、反転のきっかけ待ち)"
-        # Cクラス：25MAがまだ「下向き(↓)」の、底ばいもみ合い期
         else:
             return "C (未成熟：底固めの途上にあり、点火には数日〜数週間が必要)"
 
     @staticmethod
     def generate_educational_comment(latest_row: pd.Series, trend_stage: str, pattern: str) -> str:
         """
-        ⑤：人間がチャートを見る際の「着眼点」を教えるAI学習コメント
+        チャートを見る際の「着眼点」を教えるAI学習コメント
         """
         ma200_slope = latest_row["ma200_slope"]
-        days_held = int(latest_row["congestion_duration"])
+        duration_val = latest_row["congestion_duration"]
+        days_held = int(duration_val) if not pd.isna(duration_val) else 0
         
         if ma200_slope < -0.15:
             return (
                 f"【今回の学習着眼点】: 200日線がまだ「下向き」の下降トレンド途中にあります。 "
-                f"ここからの上放れが、長期的な抵抗（200日線）を上抜けて本物の『トレンド転換（大化けの第一歩）』に発展するか、"
-                f"それとも200日線に頭を抑えられて再び下降継続（×）になってしまうかが最大の見どころです。ダマシの動きに注目してください。"
+                f"ここからの上放れが、長期的な抵抗（200日線）を上抜けて本物の『トレンド転換』に発展するか、"
+                f"それとも200日線に頭を抑えられて押し返されるかが最大の見どころです。ダマシの動きに注目してください。"
             )
         elif "ボックス" in pattern and days_held >= 20:
             return (
@@ -216,11 +211,6 @@ class EducationalAnalyzer:
 
 
 def notify_early_watch(candidates: list[dict], date_str: str):
-    """
-    【Version 7.2大刷新版】：
-    Moving Average Trend Score、エネルギー蓄積度、拡散準備度、
-    および「AIからの学習着眼点コメント」を完全搭載した、極上のクオンツ学習教材メール。
-    """
     if not candidates:
         print("本日のEarly（移動平均大収縮）予備軍は0件です。通知をスキップします。")
         return
@@ -247,19 +237,16 @@ def notify_early_watch(candidates: list[dict], date_str: str):
         body += f"### 🚀 【拡散準備度 (Expansion Readiness)】: **【 {c['readiness']} 】**\n"
         body += f"### ⚡ 【エネルギー蓄積度 (Compression Score)】: **【 {c['compression_score']} 点 】 (100点満点)**\n\n"
         
-        # 移動平均線のトレンドスコア
         body += "【Moving Average Trend Score (傾き判定)】\n"
         body += f"  ・25日移動平均線 : 【 {c['s25']} 】  (短期トレンドの方向)\n"
         body += f"  ・75日移動平均線 : 【 {c['s75']} 】  (中期トレンドの方向)\n"
         body += f"  ・200日移動平均線: 【 {c['s200']} 】  (長期トレンドの方向)\n\n"
         
-        # テクニカル詳細
         body += "【基本テクニカル】\n"
         body += f"  ・MA密集度  : **{c['congestion_width']:.2f}%** (基準: 5%以下 / 密集継続: {c['congestion_duration']}営業日)\n"
         body += f"  ・RSI(14)   : {c['rsi14']:.1f}% / BB幅: {c['bb_width']:.1f}% / 出来高比率: {c['vol_ratio']:.2f}倍\n"
         body += f"  ・52週高値比: {c['dist_52w']:+.1f}%\n\n"
         
-        # ⑤ AIによる「今回の学習ポイント」
         body += f"📢 **{c['edu_comment']}**\n"
         body += "----------------------------------------\n\n"
 
@@ -292,7 +279,12 @@ def main():
 
         print(f"=== Early Watch 予備軍スキャンの稼働を開始します (対象: {len(tickers)} 銘柄) ===")
 
-        from state5_explainable_engine import State5ExplainableEngine
+        first_file = PRICES_DIR / f"{tickers[0]}.csv"
+        print(f"  [デバッグ] 探索対象フォルダの場所: {PRICES_DIR.resolve()}")
+        print(f"  [デバッグ] 最初のファイルは存在するか?: {first_file.exists()}")
+
+        # エラー発生回数をカウントするセーフティネット
+        error_count = 0
 
         for idx, t in enumerate(tickers):
             price_path = PRICES_DIR / f"{t}.csv"
@@ -300,7 +292,6 @@ def main():
                 continue
 
             try:
-                # 日付インデックスの強制クレンジング
                 df_raw = pd.read_csv(price_path, index_col=0)
                 df_raw.index = pd.to_datetime(df_raw.index, errors="coerce")
                 df_raw = df_raw.dropna(how="all").sort_index()
@@ -314,7 +305,6 @@ def main():
                 if latest_date is None:
                     latest_date = d.index[-1].strftime("%Y-%m-%d")
 
-                # 最低流動性（売買代金）チェック (1,000万円以上)
                 if row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
@@ -333,6 +323,7 @@ def main():
                     readiness = EducationalAnalyzer.get_expansion_readiness(row, s25, s75, s200)
                     
                     # 簡易的なチャートパターン判定
+                    from state5_explainable_engine import State5ExplainableEngine
                     chart_pattern = State5ExplainableEngine.get_chart_pattern(df_raw)
                     
                     # ⑤ AIによる学習着眼点コラムの自動生成
@@ -342,7 +333,7 @@ def main():
                         "ticker": t,
                         "name": name_map.get(t, t),
                         "congestion_width": row["ma_congestion_width_pct"],
-                        "congestion_duration": int(row["congestion_duration"]),
+                        "congestion_duration": int(row["congestion_duration"]) if not pd.isna(row["congestion_duration"]) else 0,
                         "rsi14": row["rsi14"],
                         "bb_width": row["bb_width"],
                         "vol_ratio": row["vol_ratio_20"],
@@ -357,9 +348,13 @@ def main():
                         "edu_comment": edu_comment
                     })
             except Exception as e:
+                # 【修正点2】：不測のエラーが起きた場合は、最初の5件までその「本当の正体」をログに強制出力します
+                if error_count < 5:
+                    error_count += 1
+                    print(f"  [デバッグ警告] 銘柄 {t} の精査中に予期せぬエラーが発生しました: {e}")
                 continue
 
-        # 密集度が最も低く（綺麗に重なり合っており）、かつエネルギーが詰まっている上位5銘柄を抽出
+        # 密集度（congestion_width）が最も低く、より綺麗に重なり合っているもの上位5銘柄を抽出
         if candidates:
             sorted_candidates = sorted(candidates, key=lambda x: x["congestion_width"])
             priority_candidates = sorted_candidates[:5]
