@@ -36,4 +36,8 @@ jobs:
           NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
         run: |
           # 毎晩 sniper_motion.yml が自動で最新化してくれた data_cache を再利用します
+<<<<<<< HEAD
           python early_regime_screener.py || echo "Warning: Early Watch failed, logged above."
+=======
+          python early_regime_screener.py || echo "Warning: Early Watch failed, logged above."
+>>>>>>> 5379bcd62b7864b705e5eee5a9f58171e3239c26
