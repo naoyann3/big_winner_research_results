@@ -171,7 +171,6 @@ def main():
                 if (
                     row["ma_congestion_width_pct"] <= 5.0
                     and row["ma25_slope"] > 0
-                    and row["ma25_slope_prev"] <= 0
                     and row["bb_width"] <= 10.0
                     and row["vol_ratio_20"] <= 1.5
                 ):
