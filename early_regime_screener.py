@@ -1,4 +1,4 @@
-# early_regime_screener.py (Version 1.0 - Early Watch)
+# early_regime_screener.py (Version 1.0 - Early Watch - Fixed)
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 import numpy as np
 import pandas as pd
+import yfinance as yf
 from datetime import datetime
 
 # --- 設定ロード ---
@@ -52,7 +53,7 @@ class EarlyStateEngine:
         d["ma25_slope"] = d["ma25"].pct_change(5) * 100
         d["ma25_slope_prev"] = d["ma25_slope"].shift(1)
         
-        # 3本MAの収縮幅（密集度）
+        # 3本MA of 収縮幅（密集度）
         d["ma_max"] = d[["ma25", "ma75", "ma200"]].max(axis=1)
         d["ma_min"] = d[["ma25", "ma75", "ma200"]].min(axis=1)
         d["ma_mean"] = d[["ma25", "ma75", "ma200"]].mean(axis=1)
@@ -67,7 +68,7 @@ class EarlyStateEngine:
         std20 = d["Close"].rolling(20).std()
         d["bb_width"] = (std20 * 4) / d["ma25"] * 100
         
-        # RSI(14)
+        # RSI
         delta = d["Close"].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -141,6 +142,7 @@ def main():
         name_map = dict(zip(df_uni["ticker"].map(normalize_ticker), df_uni["name"]))
 
         candidates = []
+        priority_candidates = []  # 【安全設計】：ここで最初から空リストで初期化しておきます
         latest_date = None
 
         print(f"=== Early Watch 予備軍スキャンの稼働を開始します (対象: {len(tickers)} 銘柄) ===")
@@ -165,13 +167,7 @@ def main():
                 if row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # --------------------------------------------------
-                # ★【予備軍の厳格な数理的定義】
-                # 1. 25/75/200日線が極限まで1点に密集していること (5%以下)
-                # 2. 25日線の傾きが、昨日までマイナス（または0）だったものが、本日「上向きに反転」したばかりであること
-                # 3. ボラティリティ（BB幅）が10%以下に細く収縮していること
-                # 4. 出来高がまだ大衆に気づかれておらず、売り枯れていること (1.5倍以下)
-                # --------------------------------------------------
+                # 予備軍の厳格な定義
                 if (
                     row["ma_congestion_width_pct"] <= 5.0
                     and row["ma25_slope"] > 0
@@ -193,7 +189,8 @@ def main():
             except Exception:
                 continue
 
-            # 密集度（congestion_width）が低く、より綺麗に重なり合っているもの上位5銘柄を抽出
+        # 【修正・インデント変更】：forループが完全に「終わった後」に、1回だけソートと上位5社抽出を実行します
+        if candidates:
             sorted_candidates = sorted(candidates, key=lambda x: x["congestion_width"])
             priority_candidates = sorted_candidates[:5]
 
