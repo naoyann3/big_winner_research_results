@@ -1,4 +1,4 @@
-# early_regime_screener.py (Version 1.0 - Early Watch - Fixed-v2)
+# early_regime_screener.py (Version 1.0 - Early Watch - Debug-v3)
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -147,11 +147,12 @@ def main():
 
         print(f"=== Early Watch 予備軍スキャンの稼働を開始します (対象: {len(tickers)} 銘柄) ===")
 
-        # ↓↓↓ 【デバッグ用：この3行を一時的に追記します】 ↓↓↓
         first_file = PRICES_DIR / f"{tickers[0]}.csv"
         print(f"  [デバッグ] 探索対象フォルダの場所: {PRICES_DIR.resolve()}")
         print(f"  [デバッグ] 最初のファイルは存在するか?: {first_file.exists()}")
-        # ↑↑↑ 【追記ここまで】 ↑↑↑
+
+        # エラー発生回数をカウント
+        error_count = 0
 
         for idx, t in enumerate(tickers):
             price_path = PRICES_DIR / f"{t}.csv"
@@ -159,7 +160,6 @@ def main():
                 continue
 
             try:
-                # 【バグ修正点】：日付インデックスを強制クレンジングし、サイレント・スキップを完璧に防止します
                 df_raw = pd.read_csv(price_path, index_col=0)
                 df_raw.index = pd.to_datetime(df_raw.index, errors="coerce")
                 df_raw = df_raw.dropna(how="all").sort_index()
@@ -190,7 +190,11 @@ def main():
                         "dist_52w": row["dist_to_52w_high"],
                         "ma75": row["ma75"]
                     })
-            except Exception:
+            except Exception as e:
+                # 【Version 7.95デバッグ新設】：最初の3件のエラー内容をログに強制出力します
+                if error_count < 3:
+                    error_count += 1
+                    print(f"  [デバッグエラーログ] 銘柄 {t} のスキャン中に例外が発生しました: {e}")
                 continue
 
         # forループが完全に「終わった後」に、1回だけソートと上位5社抽出を実行
