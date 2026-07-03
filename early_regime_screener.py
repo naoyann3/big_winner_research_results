@@ -147,6 +147,12 @@ def main():
 
         print(f"=== Early Watch 予備軍スキャンの稼働を開始します (対象: {len(tickers)} 銘柄) ===")
 
+        # ↓↓↓ 【デバッグ用：この3行を一時的に追記します】 ↓↓↓
+        first_file = PRICES_DIR / f"{tickers[0]}.csv"
+        print(f"  [デバッグ] 探索対象フォルダの場所: {PRICES_DIR.resolve()}")
+        print(f"  [デバッグ] 最初のファイルは存在するか?: {first_file.exists()}")
+        # ↑↑↑ 【追記ここまで】 ↑↑↑
+
         for idx, t in enumerate(tickers):
             price_path = PRICES_DIR / f"{t}.csv"
             if not price_path.exists():
