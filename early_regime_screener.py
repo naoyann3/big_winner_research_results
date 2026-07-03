@@ -1,4 +1,4 @@
-# early_regime_screener.py (Version 1.0 - Early Watch - Fixed)
+# early_regime_screener.py (Version 1.0 - Early Watch - Fixed-v2)
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -142,7 +142,7 @@ def main():
         name_map = dict(zip(df_uni["ticker"].map(normalize_ticker), df_uni["name"]))
 
         candidates = []
-        priority_candidates = []  # 【安全設計】：ここで最初から空リストで初期化しておきます
+        priority_candidates = []
         latest_date = None
 
         print(f"=== Early Watch 予備軍スキャンの稼働を開始します (対象: {len(tickers)} 銘柄) ===")
@@ -153,7 +153,11 @@ def main():
                 continue
 
             try:
-                df_raw = pd.read_csv(price_path, index_col=0, parse_dates=True).sort_index()
+                # 【バグ修正点】：日付インデックスを強制クレンジングし、サイレント・スキップを完璧に防止します
+                df_raw = pd.read_csv(price_path, index_col=0)
+                df_raw.index = pd.to_datetime(df_raw.index, errors="coerce")
+                df_raw = df_raw.dropna(how="all").sort_index()
+                
                 if len(df_raw) < 150:
                     continue
 
@@ -167,12 +171,12 @@ def main():
                 if row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-               # 必須判定を完全に無効化し、全銘柄を対象に強制スキャン・スコアリングします
+                # --- 【テスト用】：条件を if True: にして強制的に全件抽出 ---
                 if True:
                     candidates.append({
                         "ticker": t,
                         "name": name_map.get(t, t),
-                        "congestion_width": row["ma_congestion_width_pct"],
+                        "congestion_width": row["ma_congestion_width_pct"] if not pd.isna(row["ma_congestion_width_pct"]) else 999.0,
                         "rsi14": row["rsi14"],
                         "bb_width": row["bb_width"],
                         "vol_ratio": row["vol_ratio_20"],
@@ -183,7 +187,7 @@ def main():
             except Exception:
                 continue
 
-        # 【修正・インデント変更】：forループが完全に「終わった後」に、1回だけソートと上位5社抽出を実行します
+        # forループが完全に「終わった後」に、1回だけソートと上位5社抽出を実行
         if candidates:
             sorted_candidates = sorted(candidates, key=lambda x: x["congestion_width"])
             priority_candidates = sorted_candidates[:5]
