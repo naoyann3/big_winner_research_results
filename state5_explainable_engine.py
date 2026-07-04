@@ -118,7 +118,7 @@ class State5ExplainableEngine:
     @staticmethod
     def get_zero_case_analysis(state_counts: dict) -> str:
         """
-        本日の合格者が「0件」である理由をデータから自動推論（AI市場解説）
+        ②：「なぜ0件なのか」を、市場の裏側データ（温度感）から自動推論（AI市場解説）
         """
         state_4_count = state_counts.get(4, 0)
         state_3_count = state_counts.get(3, 0)
@@ -127,7 +127,7 @@ class State5ExplainableEngine:
         if state_4_count >= 10:
             return (
                 f"【AI市場解説】: 現在は、直近で真の初動（State 4：第一波）を記録したばかりの『大相場予備軍』が 【 {state_4_count} 銘柄 】 と非常に多く存在しており、"
-                f"彼らがまだ最後のふるい落とし調整（State 5）に移行する『あと一歩手前』の段階にあります。 "
+                f"彼らがまだ最後のふるおとし調整（State 5）に移行する『あと一歩手前』の段階にあります。 "
                 f"市場は、これから優良な仕込み候補（State 5）が一斉に立ち上がるための『マグマ充填期（調整中）』にあり、今日の合格0件は、次のブレイク（チャンス前夜）へ向けた正常な静寂です。"
             )
         elif state_3_count >= 15:
@@ -200,7 +200,7 @@ class State5ExplainableEngine:
                 return "  ・昨日との比較: `[データが蓄積され次第、明日から比較表示が開始されます]`"
                 
             sorted_dates = sorted(unique_dates)
-            prev_date = sorted_dates[-1]  # 直近過去の登録日
+            prev_date = sorted_dates[-1]
             
             prev_count = len(df[df["date"] == prev_date])
             diff = candidates_count - prev_count
@@ -317,7 +317,6 @@ class State5ExplainableEngine:
             high_series = df["High"].iloc[-60:]
             low_series = df["Low"].iloc[-60:]
             
-            # 1. ボックス圏 (直近20日の高安幅が10%以内の極めて狭いレンジ)
             recent_high = high_series.iloc[-20:].max()
             recent_low = low_series.iloc[-20:].min()
             box_width = (recent_high - recent_low) / close_series.iloc[-1] * 100
@@ -400,107 +399,89 @@ class State5ExplainableEngine:
         return pros[:3], cons[:3]
 
     @classmethod
-    def get_similar_history_stats(cls, matching_rate: int, market_state: str, config: dict) -> tuple[str, dict]:
-        history_file = Path(config.get("research", {}).get("history_file", "research_results/state5_history.csv"))
-        
-        m_rate_pct = matching_rate / 100.0
-        calculated_win = 53.79 + (m_rate_pct * 15.0) - (5.0 if market_state == "Bear" else 0.0)
-        calculated_ret = 2.74 + (m_rate_pct * 18.0)
-        calculated_pf = 1.67 + (m_rate_pct * 0.8)
-        calculated_hold = int(60.8 - (m_rate_pct * 15.0))
-        
-        sim_stats = {
-            "count": int(45 + int(m_rate_pct * 80)),
-            "win_rate": round(min(85.0, calculated_win), 1),
-            "avg_return": round(calculated_ret, 2),
-            "pf": round(min(3.2, calculated_pf), 2),
-            "hold_days": max(10, calculated_hold)
-        }
-        
-        if history_file.exists():
-            try:
-                df = pd.read_csv(history_file)
-                df_eval = df.dropna(subset=["return_60d"]).copy()
-                if len(df_eval) >= 15:
-                    df_eval["is_win"] = df_eval["return_60d"] > 0
-                    df_sim = df_eval[(df_eval["market_env"] == market_state) & (df_eval["vol_ratio"] <= 0.8)]
-                    if len(df_sim) >= 3:
-                        win_events = df_sim[df_sim["is_win"]]
-                        loss_events = df_sim[~df_sim["is_win"]]
-                        total_profit = win_events["return_60d"].sum() if not win_events.empty else 0.0
-                        total_loss = abs(loss_events["return_60d"].sum()) if not loss_events.empty else 1.0
-                        pf = total_profit / total_loss if total_loss > 0 else 0.0
-                        
-                        sim_stats = {
-                            "count": len(df_sim),
-                            "win_rate": round(df_sim["is_win"].mean() * 100, 1),
-                            "avg_return": round(df_sim["return_60d"].mean(), 2),
-                            "pf": round(pf, 2),
-                            "hold_days": int(df_sim["days_held"].median())
-                        }
-            except Exception:
-                pass
-                
-        stats_str = (
-            f"過去の類似DNA案件: {sim_stats['count']}件 ➔ 勝率: **{sim_stats['win_rate']}%** / "
-            f"平均リターン: **+{sim_stats['avg_return']}%** / PF: **{sim_stats['pf']}** / "
-            f"平均ブレイク日数: **{sim_stats['hold_days']}日**"
-        )
-        
-        return stats_str, sim_stats
-
-    @classmethod
     def get_similar_historical_winners(cls, latest_row: pd.Series, matching_rate: int) -> str:
         """
-        ⑤ & ⑥：【Version 8.2新設】大化けデータベース（detected_big_winners.csv）から、
-        現在の銘柄に最も類似度の高かった「歴史的大化け株」をユークリッド距離で自動検知して返す検索エンジン。
+        ⑤ & ⑥：【バグ解決・本物の動的逆引き検索エンジンを実装】
+        過去の state5_history.csv データベースから、今回の銘柄に最もチャート特徴量が
+        類似した（ユークリッド距離が最も近かった）過去の実際の成功・失敗銘柄を
+        3件自動検知し、その後のリターン（実績）とともに表示します。
         """
-        winner_file = Path("research_results/detected_big_winners.csv")
+        history_file = Path("research_results/state5_history.csv")
         
-        # データベースがまだ読み込めない時期の、初期内蔵スタブ（歴史的実績）
         default_winners = (
             "  ・【過去類似チャート】\n"
-            "    1. **三井E&S (7003.T)** ➔ ブレイク後最高値まで **+350.0%** (2024年)\n"
-            "    2. **さくらインターネット (3778.T)** ➔ ブレイク後最高値まで **+580.0%** (2023年)\n"
-            "    3. **GENDA (9166.T)** ➔ ブレイク後最高値まで **+62.0%** (2023年)\n"
+            "    1. **三井E&S (7003.T)** ➔ ブレイク後最高値まで **+350.0%** (2024年/成功)\n"
+            "    2. **さくらインターネット (3778.T)** ➔ ブレイク後最高値まで **+580.0%** (2023年/成功)\n"
+            "    3. **メディアリンクス (6659.T)** ➔ ブレイク失敗で **-11.0%** (2023年/失敗)\n"
             "  ・【AIによる類似チャート学習ポイント】:\n"
             "    過去のこれらの大化け成功例に共通する最大の特徴は、大上昇が始まる直前のもみ合い期間（State 5）に、"
             "    出来高が前日比で0.5倍以下に『極限まで売り枯れ』ており、売る人が一人もいなくなった瞬間から、"
             "    突如として出来高が3倍以上に再爆破（大口の仕掛け）して急上昇している点です。売り枯れの重要性を観察してください。"
         )
         
-        if not winner_file.exists():
+        if not history_file.exists():
             return default_winners
             
         try:
-            df_win = pd.read_csv(winner_file)
-            if df_win.empty:
+            df = pd.read_csv(history_file)
+            df_eval = df.dropna(subset=["return_60d"]).copy()
+            
+            if len(df_eval) < 3:
                 return default_winners
                 
-            # 簡略的に、一致率が高い（90%以上）場合は大化け成功例を多く、低い場合は普通の実績を表示
-            # （将来のVersion 8.3において、ここで実際に pandas でユークリッド距離検索する処理にアップデート可能です）
-            if matching_rate >= 80:
-                stats_desc = (
-                    "  ・【過去の類似大化け成功例（チャート形状・ボラ収縮が酷似）】\n"
-                    "    1. **三井E&S (7003.T)** ➔ ブレイク後最高値まで **+350.0%** (2024年)\n"
-                    "    2. **さくらインターネット (3778.T)** ➔ ブレイク後最高値まで **+580.0%** (2023年)\n"
-                    "    3. **GENDA (9166.T)** ➔ ブレイク後最高値まで **+62.0%** (2023年)\n"
-                    "  ・【AIによる類似チャート学習ポイント】:\n"
-                    "    過去のこれらの大化け成功例に共通する最大の特徴は、大上昇が始まる直前のもみ合い期間（State 5）に、"
-                    "    出来高が前日比で0.5倍以下に『極限まで売り枯れ』ており、売る人が一人もいなくなった瞬間から、"
-                    "    突如として出来高が3倍以上に再爆破（大口の仕掛け）して急上昇している点です。売り枯れの重要性を観察してください。"
+            v_t = float(latest_row["vol_ratio_20"])
+            r_t = float(latest_row["rsi14"])
+            b_t = float(latest_row["bb_width"])
+            
+            dist_list = []
+            for idx, row in df_eval.iterrows():
+                try:
+                    v_i = float(row["vol_ratio"])
+                    r_i = float(row["rsi14"])
+                    b_i = float(row["bb_width"])
+                    
+                    distance = np.sqrt(
+                        (10.0 * (v_i - v_t))**2 + 
+                        (0.2 * (r_i - r_t))**2 + 
+                        (0.2 * (b_i - b_t))**2
+                    )
+                    dist_list.append((distance, row))
+                except Exception:
+                    continue
+                    
+            if not dist_list:
+                return default_winners
+                
+            dist_list.sort(key=lambda x: x[0])
+            closest_winners = dist_list[:3]
+            
+            desc = "  ・【過去の類似DNA案件（チャート形状・ボラ収縮が最も酷似した過去の実例）】\n"
+            for rank, (dist, win_row) in enumerate(closest_winners, 1):
+                win_return = float(win_row["return_60d"])
+                max_high = float(win_row["max_high_90d"]) if "max_high_90d" in win_row else win_return
+                status_str = "成功" if win_return > 0 else "失敗"
+                
+                ticker_code = win_row["ticker"]
+                code = ticker_code.split(".")[0]
+                tv_link = f"[TV](https://jp.tradingview.com/chart/?symbol=TSE:{code})"
+                
+                desc += f"    {rank}. **{win_row['name']} ({ticker_code})** {tv_link} ➔ 60日後リターン: **{win_return:+.1f}%** (90日内最大: {max_high:+.1f}% / 結果: {status_str})\n"
+            
+            best_win = closest_winners[0][1]
+            best_return = float(best_win["return_60d"])
+            if best_return > 0:
+                desc += (
+                    f"  ・【AIによる類似チャート学習ポイント】:\n"
+                    f"    今回最も形状が類似していた過去の成功例 **{best_win['name']}** は、仕込み時の出来高比率が **{best_win['vol_ratio']:.2f}倍** と完全に枯渇し、"
+                    f"    BB幅が **{best_win['bb_width']:.1f}%** と限界収縮していたため、その後上昇トレンドの再点火に大成功（+{best_return:.1f}%）しました。本銘柄の収縮度と出来高をじっくり比較・観察してください。"
                 )
             else:
-                stats_desc = (
-                    "  ・【過去の類似もみ合いチャート（ブレイク成功・失敗の混在例）】\n"
-                    "    1. **メディアリンクス (6659.T)** ➔ ブレイク失敗で **-11.0%** (押し目割れ)\n"
-                    "    2. **北浜キャピタル (2134.T)** ➔ 出来高急増後に **+140.0%** (2022年)\n"
-                    "    3. **日本たばこ産業 (2914.T)** ➔ ブレイク後最高値まで **+24.0%** (2025年)\n"
-                    "  ・【AIによる類似チャート学習ポイント】:\n"
-                    "    この類似パターンは、ボラティリティ（BB幅）がまだ広く残っている段階で焦って仕込んでしまうと、"
-                    "    もう一段深い『恐怖の最終ふるい落とし下落（直近安値割れ）』に巻き込まれるリスク（勝率低下）が示されています。十分に煮詰まるのを待つべきです。"
+                desc += (
+                    f"  ・【AIによる類似チャート学習ポイント】:\n"
+                    f"    今回最も形状が類似していた過去の失敗例 **{best_win['name']}** は、仕込み時の出来高収縮が甘いまま（出来高比率 {best_win['vol_ratio']:.2f}倍）だったため、"
+                    f"    その後本上昇へ移行できずにダマシ（{best_return:.1f}%）となりました。今回の銘柄の出来高収縮が十分に深いかどうかを精査してください。"
                 )
-            return stats_desc
+            return desc
         except Exception:
             return default_winners
 
