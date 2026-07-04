@@ -318,6 +318,11 @@ def main():
                 if latest_date is None:
                     latest_date = d.index[-1].strftime("%Y-%m-%d")
 
+                # ↓↓↓ 【デバッグ用：この4行を一時的に追記します】 ↓↓↓
+                if idx < 10:
+                    print(f"  [デバッグ] 銘柄 {t} ➔ データ行数: {len(df_raw)} / 20日平均売買代金: {row['turnover_avg20_million']:.2f} 百万円 (しきい値: {TH_MIN_TURNOVER:.2f} 百万円)")
+                # ↑↑↑ 【追記ここまで】 ↑↑↑
+
                 # 最低流動性（売買代金）チェック (1,000万円以上)
                 if row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
