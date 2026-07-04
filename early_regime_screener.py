@@ -1,4 +1,4 @@
-# early_regime_screener.py (Version 1.0 - Early Watch - Fixed-v7-Complete)
+# early_regime_screener.py (Version 1.0 - Early Watch - Fixed-v5)
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -210,6 +210,10 @@ class EducationalAnalyzer:
 
 
 def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: list[str] = None):
+    """
+    【Version 7.23 大刷新版】：
+    毎朝の5銘柄に、過去類似大化け株の自動逆引き、および進化アラートを完全搭載。
+    """
     if not candidates and not evolution_alerts:
         print("本日のEarly（移動平均大収縮）予備軍は0件です。通知をスキップします。")
         return
@@ -229,6 +233,7 @@ def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: 
     else:
         msg["Subject"] = f"【Early Watch】{date_str} 移動平均大収縮・予備軍 {len(candidates)} 銘柄"
 
+    # 進化アラートの表示（最上部）
     body = ""
     if evolution_alerts:
         body += "## ━━━━━━━━━━━━━━━━━━\n"
@@ -250,12 +255,13 @@ def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: 
         body += f"### 🚀 【拡散準備度 (Expansion Readiness)】: **【 {c['readiness']} 】**\n"
         body += f"### ⚡ 【エネルギー蓄積度 (Compression Score)】: **【 {c['compression_score']} 点 】 (100点満点)**\n\n"
         
+        # 過去類似大化け株の動的表示
         body += f"{c['similar_winners_desc']}\n\n"
         
         body += "【Moving Average Trend Score (傾き判定)】\n"
         body += f"  ・25日移動平均線 : 【 {c['s25']} 】  (短期トレンドの方向)\n"
         body += f"  ・75日移動平均線 : 【 {c['s75']} 】  (中期トレンドの方向)\n"
-        body += f"  ・200日移動平均線: 【 {c['s200']} 】  (長期トレンド of 方向)\n\n"
+        body += f"  ・200日移動平均線: 【 {c['s200']} 】  (長期トレンドの方向)\n\n"
         
         body += "【基本テクニカル】\n"
         body += f"  ・MA密集度  : **{c['congestion_width']:.2f}%** (基準: 5%以下 / 密集継続: {c['congestion_duration']}営業日)\n"
@@ -296,6 +302,7 @@ def main():
 
         from state5_explainable_engine import State5ExplainableEngine
 
+        # エラー発生回数をカウント
         error_count = 0
 
         for idx, t in enumerate(tickers):
@@ -318,30 +325,35 @@ def main():
                 if latest_date is None:
                     latest_date = d.index[-1].strftime("%Y-%m-%d")
 
-                # ↓↓↓ 【デバッグ用：この4行を一時的に追記します】 ↓↓↓
-                if idx < 10:
-                    print(f"  [デバッグ] 銘柄 {t} ➔ データ行数: {len(df_raw)} / 20日平均売買代金: {row['turnover_avg20_million']:.2f} 百万円 (しきい値: {TH_MIN_TURNOVER:.2f} 百万円)")
-                # ↑↑↑ 【追記ここまで】 ↑↑↑
-
                 # 最低流動性（売買代金）チェック (1,000万円以上)
                 if row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
                 # --- 【テスト用】：条件を if True: にして強制的に全件抽出 ---
                 if True:
+                    # ① MAの傾き（矢印）判定
                     s25, s75, s200 = EducationalAnalyzer.get_ma_slope_symbols(row)
+                    
+                    # ② トレンド成熟度の総合判定
                     trend_stage = EducationalAnalyzer.get_trend_stage(row, s25, s75, s200)
+                    
+                    # ③ Compression Score (エネルギー蓄積度 100点満点)
                     comp_score = EducationalAnalyzer.calculate_compression_score(row)
+                    
+                    # ④ Expansion Readiness (拡散準備度ランク)
                     readiness = EducationalAnalyzer.get_expansion_readiness(row, s25, s75, s200)
                     
+                    # 簡易的なチャートパターン判定
+                    # 新旧互換対応
                     if hasattr(State5ExplainableEngine, "get_chart_pattern"):
                         chart_pattern = State5ExplainableEngine.get_chart_pattern(df_raw)
                     else:
                         chart_pattern = State5ExplainableEngine.detect_chart_pattern(df_raw)
                         
+                    # ⑤ AIによる学習着眼点コラムの自動生成
                     edu_comment = EducationalAnalyzer.generate_educational_comment(row, trend_stage, chart_pattern)
                     
-                    # 【Version 7.23新設】：大化けデータベースから自動逆引き
+                    # 【Version 7.23新設】：★大化けデータベースから自動逆引き
                     type0_match = State5ExplainableEngine.get_type0_matching_rate(row)
                     similar_winners_desc = State5ExplainableEngine.get_similar_historical_winners(row, type0_match)
                     
@@ -363,9 +375,14 @@ def main():
                         "edu_comment": edu_comment,
                         "similar_winners_desc": similar_winners_desc  # 追加
                     })
-            except Exception:
+            except Exception as e:
+                # 【Version 7.95デバッグ新設】：最初の5件のエラー内容をログに強制出力します
+                if error_count < 5:
+                    error_count += 1
+                    print(f"  [デバッグ警告] 銘柄 {t} の精査中に予期せぬエラーが発生しました: {e}")
                 continue
 
+        # 密集度が最も低く（綺麗に重なり合っており）、かつエネルギーが詰まっている上位5銘柄を抽出
         if candidates:
             sorted_candidates = sorted(candidates, key=lambda x: x["congestion_width"])
             priority_candidates = sorted_candidates[:5]
@@ -379,7 +396,7 @@ def main():
             
             # 1. 今朝検出された5件の予備軍を自動保存（※引数エラーを完全に解決）
             from early_history_logger import EarlyHistoryLogger
-            EarlyHistoryLogger.log_early_candidates(priority_candidates, latest_date, config) # 👈 ★【修正点】：正しいメソッドと引数に変更
+            EarlyHistoryLogger.log_early_candidates(priority_candidates, latest_date, config)
             
             # 2. 過去の予備軍の自動追跡・採点 ＆ 進化・失敗判定
             from early_performance_tracker import EarlyPerformanceTracker
@@ -390,7 +407,7 @@ def main():
         except Exception as e:
             print(f"【エラーログ】Version 7.22 予備軍追跡中に例外が発生しました: {e}")
 
-        # 毎朝のEarlyメール送信
+        # 毎朝のEarly（学習・教材特化型）メール送信（進化アラートがあれば最上部に挿入します）
         notify_early_watch(priority_candidates, latest_date, evolution_alerts)
 
     except Exception as e:
