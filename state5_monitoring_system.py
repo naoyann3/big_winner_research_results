@@ -1,3 +1,4 @@
+# state5_monitoring_system.py (Version 8.1 - Main)
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -211,21 +212,14 @@ def score_and_comment_candidate(latest_row: pd.Series) -> tuple[int, list[str]]:
 
 
 def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str, state_counts: dict):
-    """
-    【Version 8.1：UI整合性改善版】：
-    市場全体（地合い➔温度➔比較）➔ Sniper判定（Layer 0結論➔AI解説➔ToDo➔個別詳細）という、
-    人間工学に基づく完璧な論理フローに整理整頓したレイアウト。
-    """
     if not (GMAIL_USER and GMAIL_PASS and NOTIFICATION_EMAIL):
         print("警告: メールの認証情報、または通知先アドレスが未設定です。")
         return
 
     from state5_explainable_engine import State5ExplainableEngine
     
-    # ⑤：地合いの星評価と期待値の取得
     star_title, env_desc, stats_str = State5ExplainableEngine.get_market_env_expectancy_v71(market_state, config)
     
-    # 0件理由の自動分析（または1件以上の時の総括）
     if not candidates:
         ai_summary_str = State5ExplainableEngine.get_zero_case_analysis(state_counts)
         subject_str = f"【State5 Watch】{date_str} 正常稼働報告（候補0件）"
@@ -234,16 +228,11 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
     else:
         ai_summary_str = State5ExplainableEngine.generate_ai_summary(candidates, market_state)
         subject_str = f"【State5 Watch】{date_str} 優先候補 {len(candidates)} 銘柄"
-        action_decision = f"監視（優先候補: {candidates[0]['name']}等）"
+        action_decision = f"監視強化（優先候補: {candidates[0]['name']}等）"
         decision_desc = f"本日、黄金仕込みのDNAを満たした銘柄が {len(candidates)} 件出現しました。ToDo指示を確認の上、チャートを監視してください。"
 
-    # 昨日との差分（比較）
     comparison_str = State5ExplainableEngine.get_history_comparison(len(candidates), market_state, config)
-    
-    # 市場温度（State分布）
-    market_temp_str = State5ExplainableEngine.get_market_temperature(state_counts)
-    
-    # AI Health Report (Heartbeat)
+    market_temp_str = State5ExplainableEngine.get_market_temperature(state_counts, config)
     health_report_str = State5ExplainableEngine.get_health_report()
 
     msg = MIMEMultipart()
@@ -251,40 +240,19 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
     msg["To"] = NOTIFICATION_EMAIL
     msg["Subject"] = subject_str
 
-    # ==================================================
-    # 🔵 1. 【市場環境 ＆ データ分析】セクション
-    # ==================================================
-    body = f"# 【{DISPLAY_NAME}】{date_str} 意思決定支援レポート\n"
-    body += "※情報量よりも「人間が1分以内で監視対象を決定できること」を最優先に設計されたレポートです。\n"
-    body += "----------------------------------------\n"
-    body += f"### ■ 本日の相場環境判定: 【 {star_title} 】\n"
-    body += f"*   **地合い状況**: {env_desc}\n\n"
-    
-    body += "**【市場温度（市場全体のState分布状況）】**\n"
-    body += f"{market_temp_str}\n\n"
-    body += "**【昨日との比較】**\n"
-    body += f"{comparison_str}\n"
-    body += f"**【現在の地合いにおける、過去5,487件の実績期待値】**:\n{stats_str}\n"
-    body += "----------------------------------------\n\n"
-
-    # ==================================================
-    # 🔴 2. 【Sniper売買判定：Layer 0（5秒結論）】
-    # ==================================================
+    body = "## ━━━━━━━━━━━━━━━━━━\n"
+    body += "## 🔴 Layer 0：【今日の投資指令室（Daily Command Center）】\n"
     body += "## ━━━━━━━━━━━━━━━━━━\n"
-    body += "## 🔴 Layer 0：【本日の最優先結論】\n"
-    body += "## ━━━━━━━━━━━━━━━━━━\n"
-    body += f"  ・市場全体の地合い : {market_state}\n"
-    body += f"  ・本日のSniper判定 : 監視対象 【 {len(candidates)} 件 】\n"
-    body += f"  ・今日の投資行動   : **【 {action_decision} 】**\n"
+    body += f"  ・本日の市場環境 : {star_title}\n"
+    body += f"  ・本日のState 5  : {len(candidates)} 件\n"
+    body += f"  ・今日のアクション: **【 {action_decision} 】**\n"
     body += f"  ・AIによる判断理由 : {decision_desc}\n"
     body += "## ━━━━━━━━━━━━━━━━━━\n\n"
 
-    # ⑤：AI総括を「市場の背景説明」に進化
     body += "### 💡 【本日の市場の空気感・背景説明（AI総括）】\n"
     body += f"{ai_summary_str}\n"
     body += "----------------------------------------\n\n"
 
-    # 1分要約TOP3の表示（データがある場合のみ）
     if candidates:
         top3_str = ""
         for idx, c in enumerate(candidates[:3], 1):
@@ -295,7 +263,15 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
         body += top3_str
         body += "----------------------------------------\n\n"
 
-    # 個別銘柄詳細（データがある場合のみ実行：Layer 1 〜 Layer 3）
+    body += "### 📊 【市場の温度・地合いデータ（Regime）】\n"
+    body += "----------------------------------------\n"
+    body += "**【市場温度（市場全体のState分布状況）】**\n"
+    body += f"{market_temp_str}\n\n"
+    body += "**【昨日との比較】**\n"
+    body += f"{comparison_str}\n"
+    body += f"**【現在の地合いにおける、過去5,487件の実績期待値】**:\n{stats_str}\n"
+    body += "----------------------------------------\n\n"
+
     if not candidates:
         body += "## 💡 【今日のAction (本日やることチェックリスト)】\n"
         body += "  ☑ 【見送り (Avoid)】 ➔ 本日は全銘柄監視対象外（新規エントリー見送り、静観・資金温存推奨）\n"
@@ -304,7 +280,6 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
         for idx, c in enumerate(candidates, 1):
             body += f"## {idx}. {c['name']} ({c['ticker']}) {c['links']}\n"
             
-            # 【Layer 1 (3秒判定エリア)】
             body += "### ━━━━━━━━━━━━━━━━━━\n"
             body += "### 🔴 Layer 1：本日の優先度とアクション指示\n"
             body += "### ━━━━━━━━━━━━━━━━━━\n"
@@ -318,14 +293,14 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
                 body += f"     {t_item}\n"
             body += "### ━━━━━━━━━━━━━━━━━━\n\n"
             
-            # 【Layer 2 (15秒判定エリア)】
             body += "### 🟡 Layer 2：なぜそう判断したか（強みと注意点）\n"
             body += f"  ・推定チャート形状: **{c['chart_pattern']}**\n"
             body += f"  ・状態遷移成熟度  : {c['maturity_desc']}\n"
             body += f"  ・信頼度(Confidence): **{c['confidence']}%** ({c['confidence_stars']}) / Type0一致率: **{c['type0_match_rate']}%** ({c['match_stars']})\n"
             body += f"  ・過去類似DNA実績 : {c['similar_stats_str']}\n"
             
-            if "見送り" in c["action_star"]:
+            # 【修正】：c["avoid_desc"] から c["avoid_desc"] が定義されている場合のみ参照（キーエラー防止）
+            if "見送り" in c["action_star"] and "avoid_desc" in c:
                 body += f"  ・{c['avoid_desc']}\n"
                 
             body += "\n"
@@ -338,7 +313,6 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
                 body += f"     * {con}\n"
             body += "\n"
             
-            # 【Layer 3 (詳細データエリア - 必要時のみ確認)】
             body += "### 🔵 Layer 3：詳細データ・AIコメント\n"
             body += f"  [基本データ]: 終値: {c['close']:.1f} 円 (MA75乖離: {c['ma75_dev']:+.1f}%) / RSI(14): {c['rsi14']:.1f}% / BB幅: {c['bb_width']:.1f}%\n"
             body += "  [獲得加点内訳 (獲得点数 / 配点)]:\n"
@@ -348,11 +322,9 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
             body += f"  {c['ai_comment']}\n"
             body += "----------------------------------------\n\n"
 
-        # 今日のAction Logを末尾に配置
         action_log_str = State5ExplainableEngine.generate_action_log(candidates)
         body += f"\n{action_log_str}\n\n"
 
-    # AI Health Report の配置
     body += "### 🏥 【AI System Health Report (Heartbeat)】\n"
     body += "----------------------------------------\n"
     body += f"{health_report_str}\n"
@@ -372,7 +344,7 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
 def main():
     try:
         if not UNIVERSE_CSV.exists():
-            print(f"宇宙ファイル {UNIVERSE_CSV} が存在しません。処理を中断します。")
+            print(f"宇宙ファイル {UNIVERSE_CSV} が存在しません。")
             return
 
         df_uni = pd.read_csv(UNIVERSE_CSV)
@@ -384,7 +356,6 @@ def main():
         candidates = []
         latest_date = None
 
-        # 市場温度の集計辞書
         state_counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
 
         print(f"=== State 5 監視＆スコアリングシステムの稼働を開始します (対象: {len(tickers)} 銘柄) ===")
@@ -424,8 +395,8 @@ def main():
                 if latest_row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # --- 【本番運用仕様】：State 5 のみスキャン ---
-                if latest_state == 5:
+                # --- 【テスト用】：条件を if True: にして強制的に全件抽出 ---
+                if True:
                     score, comments = score_and_comment_candidate(latest_row)
                     
                     # --- 説明可能パラメータの自動算出 ---
@@ -434,42 +405,28 @@ def main():
                     maturity_desc = State5ExplainableEngine.get_state5_maturity(int(latest_row["state_days"]))
                     confidence, conf_rank, overall_rank = State5ExplainableEngine.get_confidence_and_rank(score, type0_match, market_state)
                     
-                    # チャート形状・強み・注意点
                     chart_pattern = State5ExplainableEngine.get_chart_pattern(df_raw)
                     pros, cons = State5ExplainableEngine.get_pros_and_cons(latest_row)
                     
-                    # 優先度星評価
                     action_star, action_short = State5ExplainableEngine.get_action_recommendation_v71(score, confidence, int(latest_row["state_days"]))
-                    
-                    # ダイレクトポータルリンク
                     links_dict = State5ExplainableEngine.get_chart_links(t)
                     
-                    # 過去類似統計 ＆ Avoid統計理由
                     similar_stats_str, sim_stats = State5ExplainableEngine.get_similar_history_stats(type0_match, market_state, config)
                     avoid_desc = State5ExplainableEngine.explain_avoid_reason(int(latest_row["state_days"]))
-                    
-                    # 「今日やること」のToDoリスト
                     todo = State5ExplainableEngine.generate_daily_todo(latest_row, action_short, chart_pattern)
                     
-                    # 「昨日から何が変わったか（前日差分）」
                     current_data_for_diff = {
                         "score": score,
                         "vol_ratio": float(latest_row["vol_ratio_20"]),
                         "days_in_state": int(latest_row["state_days"])
                     }
                     diff_text = State5ExplainableEngine.get_previous_diff(t, latest_date, current_data_for_diff, config)
-                    
-                    # 自然言語AIコメントにチャート形状
                     ai_comment = State5ExplainableEngine.get_natural_ai_comment(latest_row, type0_match, chart_pattern)
-                    
-                    # 1分要約用の簡易成熟度
                     maturity_short_desc = f"State 5に入って {int(latest_row['state_days'])}日目"
                     
-                    # 星評価
                     confidence_stars = State5ExplainableEngine.get_star_rating(confidence)
                     match_stars = State5ExplainableEngine.get_star_rating(type0_match)
                     
-                    # 最終優先順位スコアの算出
                     evaluation_score = State5ExplainableEngine.calculate_evaluation_score(score, type0_match, confidence, int(latest_row["state_days"]))
                     
                     candidates.append({
@@ -487,7 +444,6 @@ def main():
                         "vol_ratio": latest_row["vol_ratio_20"],
                         "comments": comments,
                         
-                        # 意思決定支援
                         "chart_pattern": chart_pattern,
                         "pros": pros,
                         "cons": cons,
@@ -501,8 +457,8 @@ def main():
                         "confidence_stars": confidence_stars,
                         "match_stars": match_stars,
                         "diff_text": diff_text,
+                        "similar_winners_desc": similar_winners_desc,
                         
-                        # 説明可能パラメータ
                         "score_details": details,
                         "deductions": deductions,
                         "type0_match_rate": type0_match,
@@ -511,20 +467,17 @@ def main():
                         "conf_rank": conf_rank,
                         "ai_comment": ai_comment,
                         
-                        # 教師データ用の追加テクニカル特徴量
                         "dist_to_52w_high": latest_row["dist_to_52w_high"],
                         "dist_to_52w_low": latest_row["dist_to_52w_low"],
                         "ma25_slope": latest_row["ma25_slope"],
                         "atr_ratio": latest_row["atr_ratio"]
                     })
-            except Exception as e:
+            except Exception:
                 continue
 
-        # 重み付けされた「最終優先順位スコア」でソート
         sorted_candidates = sorted(candidates, key=lambda x: x["evaluation_score"], reverse=True)
         priority_candidates = sorted_candidates[:PRIORITY_COUNT]
 
-        # 毎朝の説明可能プロファイルメール送信 (地合いおよび市場温度、各Stateカウントを考慮)
         notify_state5_watch(priority_candidates, latest_date, market_state, state_counts)
         
         # ==========================================
@@ -533,6 +486,30 @@ def main():
         try:
             print("\n=== Version 7: 研究データ収集・成績管理システムを自動起動します ===")
             
+            # 【Version 8.0新設：市場全体のState件数の時系列履歴の自動ロギング】
+            regime_file = Path("research_results/market_regime_history.csv")
+            regime_file.parent.mkdir(parents=True, exist_ok=True)
+            if regime_file.exists():
+                df_reg = pd.read_csv(regime_file)
+            else:
+                df_reg = pd.DataFrame(columns=["date", "state_0", "state_1", "state_2", "state_3", "state_4", "state_5", "state_6"])
+                
+            is_dup_reg = not df_reg[df_reg["date"] == latest_date].empty
+            if not is_dup_reg:
+                new_reg_row = {
+                    "date": latest_date,
+                    "state_0": state_counts.get(0, 0),
+                    "state_1": state_counts.get(1, 0),
+                    "state_2": state_counts.get(2, 0),
+                    "state_3": state_counts.get(3, 0),
+                    "state_4": state_counts.get(4, 0),
+                    "state_5": state_counts.get(5, 0),
+                    "state_6": state_counts.get(6, 0),
+                }
+                df_reg = pd.concat([df_reg, pd.DataFrame([new_reg_row])], ignore_index=True)
+                df_reg.to_csv(regime_file, index=False, encoding="utf-8-sig")
+                print(f"  [市場温度記録完了] 本日の市場State分布を {regime_file.name} に自動保存しました。")
+
             # 1. 教師データ（履歴）のロギング
             from state5_history_logger import State5HistoryLogger
             State5HistoryLogger.log_candidates(candidates, latest_date, market_env, config)
