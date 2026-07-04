@@ -1,4 +1,4 @@
-# early_regime_screener.py (Version 1.0 - Early Watch - Fixed-v6-Complete)
+# early_regime_screener.py (Version 1.0 - Early Watch - Fixed-v7-Complete)
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -171,7 +171,7 @@ class EducationalAnalyzer:
         if s25 == "↑" and s75 in ["↑", "→"] and close > ma75:
             return "S (極上：本上抜けカウントダウン状態)"
         elif s25 == "↑" and close > ma25:
-            return "A (良好：トレンド発生 of 兆候あり)"
+            return "A (良好：トレンド発生の兆候あり)"
         elif s25 == "→" and latest_row["ma_congestion_width_pct"] <= 5.0:
             return "B (待機：エネルギー充填中で、反転のきっかけ待ち)"
         else:
@@ -210,10 +210,6 @@ class EducationalAnalyzer:
 
 
 def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: list[str] = None):
-    """
-    【Version 7.23 大刷新版】：
-    毎朝の5銘柄に、過去類似大化け株の自動逆引き、および進化アラートを完全搭載。
-    """
     if not candidates and not evolution_alerts:
         print("本日のEarly（移動平均大収縮）予備軍は0件です。通知をスキップします。")
         return
@@ -233,7 +229,6 @@ def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: 
     else:
         msg["Subject"] = f"【Early Watch】{date_str} 移動平均大収縮・予備軍 {len(candidates)} 銘柄"
 
-    # 進化アラートの表示（最上部）
     body = ""
     if evolution_alerts:
         body += "## ━━━━━━━━━━━━━━━━━━\n"
@@ -255,13 +250,12 @@ def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: 
         body += f"### 🚀 【拡散準備度 (Expansion Readiness)】: **【 {c['readiness']} 】**\n"
         body += f"### ⚡ 【エネルギー蓄積度 (Compression Score)】: **【 {c['compression_score']} 点 】 (100点満点)**\n\n"
         
-        # 過去類似大化け株の動的表示（★ここに追加されました）
         body += f"{c['similar_winners_desc']}\n\n"
         
         body += "【Moving Average Trend Score (傾き判定)】\n"
         body += f"  ・25日移動平均線 : 【 {c['s25']} 】  (短期トレンドの方向)\n"
         body += f"  ・75日移動平均線 : 【 {c['s75']} 】  (中期トレンドの方向)\n"
-        body += f"  ・200日移動平均線: 【 {c['s200']} 】  (長期トレンドの方向)\n\n"
+        body += f"  ・200日移動平均線: 【 {c['s200']} 】  (長期トレンド of 方向)\n\n"
         
         body += "【基本テクニカル】\n"
         body += f"  ・MA密集度  : **{c['congestion_width']:.2f}%** (基準: 5%以下 / 密集継続: {c['congestion_duration']}営業日)\n"
@@ -328,35 +322,21 @@ def main():
                 if row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # --- 【本番運用仕様に戻しました】：移動平均密集・転換初日のみスキャン ---
-                if (
-                    row["ma_congestion_width_pct"] <= 5.0 
-                    and row["ma25_slope"] > 0 
-                    and row["ma25_slope_prev"] <= 0
-                ):
-                    # ① MAの傾き（矢印）判定
+                # --- 【テスト用】：条件を if True: にして強制的に全件抽出 ---
+                if True:
                     s25, s75, s200 = EducationalAnalyzer.get_ma_slope_symbols(row)
-                    
-                    # ② トレンド成熟度の総合判定
                     trend_stage = EducationalAnalyzer.get_trend_stage(row, s25, s75, s200)
-                    
-                    # ③ Compression Score (エネルギー蓄積度 100点満点)
                     comp_score = EducationalAnalyzer.calculate_compression_score(row)
-                    
-                    # ④ Expansion Readiness (拡散準備度ランク)
                     readiness = EducationalAnalyzer.get_expansion_readiness(row, s25, s75, s200)
                     
-                    # 簡易的なチャートパターン判定
-                    # 新旧互換対応
                     if hasattr(State5ExplainableEngine, "get_chart_pattern"):
                         chart_pattern = State5ExplainableEngine.get_chart_pattern(df_raw)
                     else:
                         chart_pattern = State5ExplainableEngine.detect_chart_pattern(df_raw)
                         
-                    # ⑤ AIによる学習着眼点コラムの自動生成
                     edu_comment = EducationalAnalyzer.generate_educational_comment(row, trend_stage, chart_pattern)
                     
-                    # 【Version 7.23新設】：★大化けデータベースから最も特徴量の近い過去類似株を自動逆引き検索！
+                    # 【Version 7.23新設】：大化けデータベースから自動逆引き
                     type0_match = State5ExplainableEngine.get_type0_matching_rate(row)
                     similar_winners_desc = State5ExplainableEngine.get_similar_historical_winners(row, type0_match)
                     
@@ -371,38 +351,32 @@ def main():
                         "dist_to_52w_high": row["dist_to_52w_high"],
                         "dist_52w": row["dist_to_52w_high"],
                         "ma75": row["ma75"],
-                        # 学習用新指標
                         "s25": s25, "s75": s75, "s200": s200,
                         "trend_stage": trend_stage,
                         "compression_score": comp_score,
                         "readiness": readiness,
                         "edu_comment": edu_comment,
-                        "similar_winners_desc": similar_winners_desc  # ★ここに追加
+                        "similar_winners_desc": similar_winners_desc  # 追加
                     })
             except Exception:
                 continue
 
-        # 密集度が最も低く（綺麗に重なり合っており）、かつエネルギーが詰まっている上位5銘柄を抽出
         if candidates:
             sorted_candidates = sorted(candidates, key=lambda x: x["congestion_width"])
             priority_candidates = sorted_candidates[:5]
 
         # ==========================================
-        # ★【Version 7.22 新設】：過去の予備軍の自律学習・自動追跡 ＆ 進化アラートの自動フック ★
+        # ★【Version 7.22 新設】：過去の予備軍の自動成績追跡・進化判定を起動 ★
         # ==========================================
         evolution_alerts = []
         try:
             print("\n=== Version 7.22: 予備軍（Early Watch）の自動成績追跡・進化判定を起動します ===")
             
-            # 1. 今朝検出された5件の予備軍を、学習用データベース（early_history.csv）に自動保存
-            from state5_history_logger import State5HistoryLogger
-            State5HistoryLogger.log_candidates(candidates, latest_date, market_env, config)
+            # 1. 今朝検出された5件の予備軍を自動保存（※引数エラーを完全に解決）
+            from early_history_logger import EarlyHistoryLogger
+            EarlyHistoryLogger.log_early_candidates(priority_candidates, latest_date, config) # 👈 ★【修正点】：正しいメソッドと引数に変更
             
-            # 2. 過去シグナルの成績自動追跡（採点）
-            from performance_tracker import PerformanceTracker
-            PerformanceTracker.track_and_score_history(config)
-            
-            # 3. 過去の予備軍の自動成績追跡 ＆ 進化・失敗イベントの自動検知
+            # 2. 過去の予備軍の自動追跡・採点 ＆ 進化・失敗判定
             from early_performance_tracker import EarlyPerformanceTracker
             evolution_alerts = EarlyPerformanceTracker.track_and_detect_evolutions(config)
             
@@ -411,7 +385,7 @@ def main():
         except Exception as e:
             print(f"【エラーログ】Version 7.22 予備軍追跡中に例外が発生しました: {e}")
 
-        # 毎朝のEarly（学習・教材特化型）メール送信（進化アラートがあれば最上部に挿入します）
+        # 毎朝のEarlyメール送信
         notify_early_watch(priority_candidates, latest_date, evolution_alerts)
 
     except Exception as e:
