@@ -209,8 +209,13 @@ class EducationalAnalyzer:
             )
 
 
-def notify_early_watch(candidates: list[dict], date_str: str):
-    if not candidates:
+def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: list[str] = None):
+    """
+    【Version 7.22大刷新版】：
+    毎朝の5銘柄に加えて、過去の予備軍が「今朝、どう進化したか（または脱落したか）」を
+    メール最上部に自動表示させます。
+    """
+    if not candidates and not evolution_alerts:
         print("本日のEarly（移動平均大収縮）予備軍は0件です。通知をスキップします。")
         return
 
@@ -223,9 +228,25 @@ def notify_early_watch(candidates: list[dict], date_str: str):
     msg = MIMEMultipart()
     msg["From"] = f"{SENDER_NAME} <{GMAIL_USER}>"
     msg["To"] = NOTIFICATION_EMAIL
-    msg["Subject"] = f"【Early Watch】{date_str} 移動平均大収縮・予備軍 {len(candidates)} 銘柄"
+    
+    # 件名の切り替え
+    if evolution_alerts:
+        msg["Subject"] = f"【Early Watch】{date_str} 予備軍の『進化』を検知！ (他 {len(candidates)} 銘柄)"
+    else:
+        msg["Subject"] = f"【Early Watch】{date_str} 移動平均大収縮・予備軍 {len(candidates)} 銘柄"
 
-    body = f"# 💡 【Early Watch】{date_str} トレンド転換初期・予備軍リスト\n"
+    # ① 【進化イベント・アラート】の最優先表示（最上部）
+    body = ""
+    if evolution_alerts:
+        body += "## ━━━━━━━━━━━━━━━━━━\n"
+        body += "## 🔔 【本日の予備軍・自律成長（進化）アラート】\n"
+        body += "## ━━━━━━━━━━━━━━━━━━\n"
+        body += "過去にEarly Watchで検出され、追跡中の銘柄に、本日劇的な変化が起きました：\n\n"
+        for alert in evolution_alerts:
+            body += f"  {alert}\n"
+        body += "## ━━━━━━━━━━━━━━━━━━\n\n"
+
+    body += f"# 💡 【Early Watch】{date_str} トレンド転換初期・予備軍リスト\n"
     body += "※買い推奨ツールではありません。移動平均線の収縮・拡散の力学を、毎日チャートを開いて学ぶための「究極の教材リスト」です。\n"
     body += "----------------------------------------\n\n"
 
@@ -280,7 +301,6 @@ def main():
 
         from state5_explainable_engine import State5ExplainableEngine
 
-        # エラー発生回数をカウント
         error_count = 0
 
         for idx, t in enumerate(tickers):
@@ -303,6 +323,7 @@ def main():
                 if latest_date is None:
                     latest_date = d.index[-1].strftime("%Y-%m-%d")
 
+                # 最低流動性（売買代金）チェック (1,000万円以上)
                 if row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
@@ -311,19 +332,27 @@ def main():
                     row["ma_congestion_width_pct"] <= 5.0 
                     and row["ma25_slope"] > 0 
                     and row["ma25_slope_prev"] <= 0
-                ):  # 👈 ★このように書き換えます
+                ):
+                    # ① MAの傾き（矢印）判定
                     s25, s75, s200 = EducationalAnalyzer.get_ma_slope_symbols(row)
+                    
+                    # ② トレンド成熟度の総合判定
                     trend_stage = EducationalAnalyzer.get_trend_stage(row, s25, s75, s200)
+                    
+                    # ③ Compression Score (エネルギー蓄積度 100点満点)
                     comp_score = EducationalAnalyzer.calculate_compression_score(row)
+                    
+                    # ④ Expansion Readiness (拡散準備度ランク)
                     readiness = EducationalAnalyzer.get_expansion_readiness(row, s25, s75, s200)
                     
-                    # 【バグ回避の安全設計・リフレクション】
-                    # 新旧どちらの関数名がインポートされても、エラーを出さずに100%安全に動作させます。
+                    # 簡易的なチャートパターン判定
+                    # 新旧互換対応
                     if hasattr(State5ExplainableEngine, "get_chart_pattern"):
                         chart_pattern = State5ExplainableEngine.get_chart_pattern(df_raw)
                     else:
                         chart_pattern = State5ExplainableEngine.detect_chart_pattern(df_raw)
                         
+                    # ⑤ AIによる学習着眼点コラムの自動生成
                     edu_comment = EducationalAnalyzer.generate_educational_comment(row, trend_stage, chart_pattern)
                     
                     candidates.append({
@@ -337,6 +366,7 @@ def main():
                         "dist_to_52w_high": row["dist_to_52w_high"],
                         "dist_52w": row["dist_to_52w_high"],
                         "ma75": row["ma75"],
+                        # 学習用新指標
                         "s25": s25, "s75": s75, "s200": s200,
                         "trend_stage": trend_stage,
                         "compression_score": comp_score,
@@ -349,12 +379,33 @@ def main():
                     print(f"  [デバッグ警告] 銘柄 {t} の精査中に予期せぬエラーが発生しました: {e}")
                 continue
 
+        # 密集度が最も低く（綺麗に重なり合っており）、かつエネルギーが詰まっている上位5銘柄を抽出
         if candidates:
             sorted_candidates = sorted(candidates, key=lambda x: x["congestion_width"])
             priority_candidates = sorted_candidates[:5]
 
-        # 毎朝のEarlyメール送信
-        notify_early_watch(priority_candidates, latest_date)
+        # ==========================================
+        # ★【Version 7.22 新設】：過去の予備軍の自律学習・自動追跡 ＆ 進化アラートの自動フック ★
+        # ==========================================
+        evolution_alerts = []
+        try:
+            print("\n=== Version 7.22: 予備軍（Early Watch）の自動成績追跡・進化判定を起動します ===")
+            
+            # 1. 今朝検出された5件の予備軍を、学習用データベース（early_history.csv）に自動記録
+            from early_history_logger import EarlyHistoryLogger
+            EarlyHistoryLogger.log_early_candidates(priority_candidates, latest_date, config)
+            
+            # 2. 過去の予備軍の自動成績追跡 ＆ 進化・失敗イベントの自動検知
+            from early_performance_tracker import EarlyPerformanceTracker
+            evolution_alerts = EarlyPerformanceTracker.track_and_detect_evolutions(config)
+            
+            print(f"=== Version 7.22: 予備軍追跡・進化判定が正常完了しました (本日発生のアラート: {len(evolution_alerts)} 件) ===")
+            
+        except Exception as e:
+            print(f"【エラーログ】Version 7.22 予備軍追跡中に例外が発生しました: {e}")
+
+        # 毎朝のEarly（学習・教材特化型）メール送信（進化アラートがあれば最上部に挿入します）
+        notify_early_watch(priority_candidates, latest_date, evolution_alerts)
 
     except Exception as e:
         print(f"【エラーログ】Early Watch 監視中に例外が発生しました: {e}")
