@@ -171,7 +171,7 @@ class EducationalAnalyzer:
         if s25 == "↑" and s75 in ["↑", "→"] and close > ma75:
             return "S (極上：本上抜けカウントダウン状態)"
         elif s25 == "↑" and close > ma25:
-            return "A (良好：トレンド発生の兆候あり)"
+            return "A (良好：トレンド発生 of 兆候あり)"
         elif s25 == "→" and latest_row["ma_congestion_width_pct"] <= 5.0:
             return "B (待機：エネルギー充填中で、反転のきっかけ待ち)"
         else:
@@ -297,6 +297,7 @@ def main():
         from state5_explainable_engine import State5ExplainableEngine
 
         error_count = 0
+        debug_print_count = 0
 
         for idx, t in enumerate(tickers):
             price_path = PRICES_DIR / f"{t}.csv"
@@ -318,14 +319,14 @@ def main():
                 if latest_date is None:
                     latest_date = d.index[-1].strftime("%Y-%m-%d")
 
-                # ↓↓↓ 【デバッグ用：この4行を一時的に追記します】 ↓↓↓
-                if idx < 10:
-                    print(f"  [デバッグ] 銘柄 {t} ➔ データ行数: {len(df_raw)} / 20日平均売買代金: {row['turnover_avg20_million']:.2f} 百万円 (しきい値: {TH_MIN_TURNOVER:.2f} 百万円)")
-                # ↑↑↑ 【追記ここまで】 ↑↑↑
-
                 # 最低流動性（売買代金）チェック (1,000万円以上)
                 if row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
+
+                # 最初の10件のみ、進行確認のためにログをプリント（Actionsのバッファ肥大化防止）
+                if debug_print_count < 10:
+                    print(f"  [デバッグ] 銘柄 {t} ➔ データ行数: {len(df_raw)} / 20日平均売買代金: {row['turnover_avg20_million']:.2f} 百万円 (しきい値: {TH_MIN_TURNOVER:.2f} 百万円)")
+                    debug_print_count += 1
 
                 # --- 【テスト用】：条件を if True: にして強制的に全件抽出 ---
                 if True:
@@ -341,9 +342,16 @@ def main():
                         
                     edu_comment = EducationalAnalyzer.generate_educational_comment(row, trend_stage, chart_pattern)
                     
-                    # 【Version 7.23新設】：大化けデータベースから自動逆引き
-                    type0_match = State5ExplainableEngine.get_type0_matching_rate(row)
-                    similar_winners_desc = State5ExplainableEngine.get_similar_historical_winners(row, type0_match)
+                    # 【Version 7.23新設】：大化けデータベースから自動逆引き (安全なフォールバック付き)
+                    if hasattr(State5ExplainableEngine, "get_type0_matching_rate"):
+                        type0_match = State5ExplainableEngine.get_type0_matching_rate(row)
+                    else:
+                        type0_match = 0
+                        
+                    if hasattr(State5ExplainableEngine, "get_similar_historical_winners"):
+                        similar_winners_desc = State5ExplainableEngine.get_similar_historical_winners(row, type0_match)
+                    else:
+                        similar_winners_desc = "  ・【過去類似チャート】: [逆引きエンジン調整中]"
                     
                     candidates.append({
                         "ticker": t,
@@ -361,12 +369,11 @@ def main():
                         "compression_score": comp_score,
                         "readiness": readiness,
                         "edu_comment": edu_comment,
-                        "similar_winners_desc": similar_winners_desc  # 追加
+                        "similar_winners_desc": similar_winners_desc
                     })
-            # --- 修正デバッグコード ---
             except Exception as e:
                 import traceback
-                # ログの肥大化を防ぐため、エラーが発生した最初の3銘柄だけ「本当の犯人（エラー内容）」を詳細に出力します
+                # ログを汚さないよう、最初の3件の不測エラーのみエラー箇所をスタックトレース付きで克明にログ表示します
                 if error_count < 3:
                     error_count += 1
                     print(f"\n[デバッグ警告] 銘柄 {t} の処理中に例外（エラー）を検知しました:")
@@ -389,7 +396,7 @@ def main():
             
             # 1. 今朝検出された5件の予備軍を自動保存（※引数エラーを完全に解決）
             from early_history_logger import EarlyHistoryLogger
-            EarlyHistoryLogger.log_early_candidates(priority_candidates, latest_date, config) # 👈 ★【修正点】：正しいメソッドと引数に変更
+            EarlyHistoryLogger.log_early_candidates(priority_candidates, latest_date, config)
             
             # 2. 過去の予備軍の自動追跡・採点 ＆ 進化・失敗判定
             from early_performance_tracker import EarlyPerformanceTracker
