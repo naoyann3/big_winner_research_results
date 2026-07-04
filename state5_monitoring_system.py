@@ -1,4 +1,3 @@
-# state5_monitoring_system.py (Version 8.1 - Main)
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -147,7 +146,7 @@ class MarketStateEngine:
             elif current_state == 4:
                 if close < row["Open"] and vol_ratio < 1.0: next_state = 5
             elif current_state == 5:
-                if close > high_20d and vol_ratio >= 1.5: next_state = 6
+                if close > high_20d workshops and vol_ratio >= 1.5: next_state = 6
                 
             if next_state != current_state:
                 current_state = next_state
@@ -298,8 +297,8 @@ def notify_state5_watch(candidates: list[dict], date_str: str, market_state: str
             body += f"  ・状態遷移成熟度  : {c['maturity_desc']}\n"
             body += f"  ・信頼度(Confidence): **{c['confidence']}%** ({c['confidence_stars']}) / Type0一致率: **{c['type0_match_rate']}%** ({c['match_stars']})\n"
             body += f"  ・過去類似DNA実績 : {c['similar_stats_str']}\n"
+            body += f"{c['similar_winners_desc']}\n"
             
-            # 【修正】：c["avoid_desc"] から c["avoid_desc"] が定義されている場合のみ参照（キーエラー防止）
             if "見送り" in c["action_star"] and "avoid_desc" in c:
                 body += f"  ・{c['avoid_desc']}\n"
                 
@@ -395,8 +394,8 @@ def main():
                 if latest_row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # --- 【テスト用】：条件を if True: にして強制的に全件抽出 ---
-                if True:
+                # --- 【本番運用仕様】：State 5 のみスキャン ---
+                if latest_state == 5:
                     score, comments = score_and_comment_candidate(latest_row)
                     
                     # --- 説明可能パラメータの自動算出 ---
@@ -412,8 +411,8 @@ def main():
                     links_dict = State5ExplainableEngine.get_chart_links(t)
                     
                     similar_stats_str, sim_stats = State5ExplainableEngine.get_similar_history_stats(type0_match, market_state, config)
-                    avoid_desc = State5ExplainableEngine.explain_avoid_reason(int(latest_row["state_days"]))
-                    todo = State5ExplainableEngine.generate_daily_todo(latest_row, action_short, chart_pattern)
+                    avoid_desc = State5ExplainableEngine.explain_avoid_reason_v8(int(latest_row["state_days"]))
+                    todo = State5ExplainableEngine.generate_daily_todo_v8(latest_row, action_short, chart_pattern)
                     
                     current_data_for_diff = {
                         "score": score,
@@ -433,7 +432,7 @@ def main():
                         "ticker": t,
                         "name": name_map.get(t, t),
                         "score": score,
-                        "evaluation_score": evaluation_score,
+                        "evaluation_score": evaluation_score,  # 重み付けされた最終優先順位スコア
                         "rank": overall_rank,
                         "state": latest_state,
                         "days_in_state": int(latest_row["state_days"]),
@@ -444,6 +443,7 @@ def main():
                         "vol_ratio": latest_row["vol_ratio_20"],
                         "comments": comments,
                         
+                        # 意思決定支援
                         "chart_pattern": chart_pattern,
                         "pros": pros,
                         "cons": cons,
@@ -459,6 +459,7 @@ def main():
                         "diff_text": diff_text,
                         "similar_winners_desc": similar_winners_desc,
                         
+                        # 説明可能パラメータ
                         "score_details": details,
                         "deductions": deductions,
                         "type0_match_rate": type0_match,
@@ -467,6 +468,7 @@ def main():
                         "conf_rank": conf_rank,
                         "ai_comment": ai_comment,
                         
+                        # 教師データ用の追加テクニカル特徴量
                         "dist_to_52w_high": latest_row["dist_to_52w_high"],
                         "dist_to_52w_low": latest_row["dist_to_52w_low"],
                         "ma25_slope": latest_row["ma25_slope"],
@@ -475,9 +477,11 @@ def main():
             except Exception:
                 continue
 
+        # 重み付けされた「最終優先順位スコア」でソート
         sorted_candidates = sorted(candidates, key=lambda x: x["evaluation_score"], reverse=True)
         priority_candidates = sorted_candidates[:PRIORITY_COUNT]
 
+        # 毎朝の説明可能プロファイルメール送信 (地合いおよび市場温度、各Stateカウントを考慮)
         notify_state5_watch(priority_candidates, latest_date, market_state, state_counts)
         
         # ==========================================
@@ -508,7 +512,7 @@ def main():
                 }
                 df_reg = pd.concat([df_reg, pd.DataFrame([new_reg_row])], ignore_index=True)
                 df_reg.to_csv(regime_file, index=False, encoding="utf-8-sig")
-                print(f"  [市場温度記録完了] 本日の市場State分布を {regime_file.name} に自動保存しました。")
+                print(f"  [市場温度記録完了] 本日の市場State分布を market_regime_history.csv に自動保存しました。")
 
             # 1. 教師データ（履歴）のロギング
             from state5_history_logger import State5HistoryLogger
