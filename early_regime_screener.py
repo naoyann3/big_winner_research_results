@@ -1,4 +1,4 @@
-# early_regime_screener.py (Version 1.0 - Early Watch - Fixed-v7-Complete)
+# early_regime_screener.py (Version 8.3 - Early Watch with Change Detection)
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -26,7 +26,7 @@ config = load_config()
 GMAIL_USER = os.environ.get("GMAIL_USER") or config.get("email", {}).get("gmail_user")
 GMAIL_PASS = os.environ.get("GMAIL_APP_PASSWORD") or config.get("email", {}).get("gmail_pass")
 NOTIFICATION_EMAIL = os.environ.get("NOTIFICATION_EMAIL") or config.get("email", {}).get("notification_email")
-SENDER_NAME = "Sniper OS - Early Watch"
+SENDER_NAME = "Sniper OS - Early Watch 8.3"
 
 UNIVERSE_CSV = Path("universe.csv")
 PRICES_DIR = Path("data_cache/prices")
@@ -88,13 +88,36 @@ class EarlyStateEngine:
         d["high_52w"] = d["High"].rolling(250, min_periods=50).max()
         d["dist_to_52w_high"] = (d["Close"] - d["high_52w"]) / d["high_52w"] * 100
 
+        # --- ②: Change Detection 用の Compression Score 計算（全行に適用） ---
+        # 簡易的に各行のCompression Scoreを算出してデータフレームに持たせる
+        scores = []
+        for idx, row in d.iterrows():
+            score = 0
+            width = row["ma_congestion_width_pct"]
+            duration = row["congestion_duration"] if not pd.isna(row["congestion_duration"]) else 0
+            bb_width = row["bb_width"]
+            
+            if width <= 1.5: score += 40
+            elif width <= 3.0: score += 30
+            elif width <= 5.0: score += 20
+            else: score += 10
+            
+            if duration >= 25: score += 30
+            elif duration >= 15: score += 20
+            elif duration >= 5: score += 10
+            else: score += 5
+            
+            if bb_width <= 5.0: score += 30
+            elif bb_width <= 8.0: score += 20
+            elif bb_width <= 12.0: score += 10
+            else: score += 5
+            scores.append(score)
+        d["compression_score"] = scores
+
         return d
 
 
 class EducationalAnalyzer:
-    """
-    学習価値を高めるための評価パラメータ算出クラス
-    """
     @staticmethod
     def get_ma_slope_symbols(latest_row: pd.Series) -> tuple[str, str, str]:
         def get_symbol(slope):
@@ -127,42 +150,7 @@ class EducationalAnalyzer:
             return "▲ 下降途中・もみ合い (底打ち転換の模索局面)"
 
     @staticmethod
-    def calculate_compression_score(latest_row: pd.Series) -> int:
-        """
-        Compression Score (エネルギー蓄積度 100点満点評価)
-        """
-        score = 0
-        width = latest_row["ma_congestion_width_pct"]
-        duration_val = latest_row["congestion_duration"]
-        
-        duration = int(duration_val) if not pd.isna(duration_val) else 0
-        bb_width = latest_row["bb_width"]
-        
-        # 1. 密集度 (最大40点)
-        if width <= 1.5: score += 40
-        elif width <= 3.0: score += 30
-        elif width <= 5.0: score += 20
-        else: score += 10
-        
-        # 2. 密集継続日数 (最大30点)
-        if duration >= 25: score += 30
-        elif duration >= 15: score += 20
-        elif duration >= 5: score += 10
-        else: score += 5
-        
-        # 3. ボラティリティ収縮（BB幅） (最大30点)
-        if bb_width <= 5.0: score += 30
-        elif bb_width <= 8.0: score += 20
-        elif bb_width <= 12.0: score += 10
-        else: score += 5
-        
-        return score
-
-    @staticmethod
     def get_expansion_readiness(latest_row: pd.Series, s25: str, s75: str, s200: str) -> str:
-        """
-        Expansion Readiness (上方向への拡散準備度：S, A, B, C)
-        """
         close = latest_row["Close"]
         ma25 = latest_row["ma25"]
         ma75 = latest_row["ma75"]
@@ -171,7 +159,7 @@ class EducationalAnalyzer:
         if s25 == "↑" and s75 in ["↑", "→"] and close > ma75:
             return "S (極上：本上抜けカウントダウン状態)"
         elif s25 == "↑" and close > ma25:
-            return "A (良好：トレンド発生 of 兆候あり)"
+            return "A (良好：トレンド発生の兆候あり)"
         elif s25 == "→" and latest_row["ma_congestion_width_pct"] <= 5.0:
             return "B (待機：エネルギー充填中で、反転のきっかけ待ち)"
         else:
@@ -179,9 +167,6 @@ class EducationalAnalyzer:
 
     @staticmethod
     def generate_educational_comment(latest_row: pd.Series, trend_stage: str, pattern: str) -> str:
-        """
-        チャートを見る際の「着眼点」を教えるAI学習コメント
-        """
         ma200_slope = latest_row["ma200_slope"]
         duration_val = latest_row["congestion_duration"]
         days_held = int(duration_val) if not pd.isna(duration_val) else 0
@@ -225,9 +210,9 @@ def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: 
     msg["To"] = NOTIFICATION_EMAIL
     
     if evolution_alerts:
-        msg["Subject"] = f"【Early Watch】{date_str} 予備軍の『進化』を検知！ (他 {len(candidates)} 銘柄)"
+        msg["Subject"] = f"【Early Watch 8.3】{date_str} 予備軍の『進化』を検知！ (他 {len(candidates)} 銘柄)"
     else:
-        msg["Subject"] = f"【Early Watch】{date_str} 移動平均大収縮・予備軍 {len(candidates)} 銘柄"
+        msg["Subject"] = f"【Early Watch 8.3】{date_str} 移動平均大収縮・予備軍 {len(candidates)} 銘柄"
 
     body = ""
     if evolution_alerts:
@@ -239,7 +224,7 @@ def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: 
             body += f"  {alert}\n"
         body += "## ━━━━━━━━━━━━━━━━━━\n\n"
 
-    body += f"# 💡 【Early Watch】{date_str} トレンド転換初期・予備軍リスト\n"
+    body += f"# 💡 【Early Watch 8.3】{date_str} トレンド転換初期・予備軍リスト\n"
     body += "※買い推奨ツールではありません。移動平均線の収縮・拡散の力学を、毎日チャートを開いて学ぶための「究極の教材リスト」です。\n"
     body += "----------------------------------------\n\n"
 
@@ -248,7 +233,13 @@ def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: 
         body += f"## {idx}. {c['name']} ({c['ticker']}) {links}\n"
         body += f"### 📊 【トレンド成熟度】: **{c['trend_stage']}**\n"
         body += f"### 🚀 【拡散準備度 (Expansion Readiness)】: **【 {c['readiness']} 】**\n"
-        body += f"### ⚡ 【エネルギー蓄積度 (Compression Score)】: **【 {c['compression_score']} 点 】 (100点満点)**\n\n"
+        
+        # --- ②: Change Detection Engine の可視化出力 ---
+        body += f"### ⚡ 【エネルギー蓄積度 (Compression Score)】: **【 {c['compression_score']} 点 】 (100点満点)**\n"
+        body += f"      ・昨日比  : {c['chg_score_1d']:+d} 点 ｜ 1週間前比: {c['chg_score_1w']:+d} 点\n"
+        body += f"      ・RSI(14) : {c['rsi14']:.1f}% (昨日比: {c['chg_rsi_1d']:+.1f}% ｜ 1週間前比: {c['chg_rsi_1w']:+.1f}%)\n"
+        body += f"      ・出来高  : {c['vol_ratio']:.2f}倍 (昨日比: {c['chg_vol_1d']:+.2f} ｜ 1週間前比: {c['chg_vol_1w']:+.2f})\n"
+        body += f"      ・BB幅    : {c['bb_width']:.1f}% (昨日比: {c['chg_bb_1d']:+.1f}% ｜ 1週間前比: {c['chg_bb_1w']:+.1f}%)\n\n"
         
         body += f"{c['similar_winners_desc']}\n\n"
         
@@ -259,13 +250,16 @@ def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: 
         
         body += "【基本テクニカル】\n"
         body += f"  ・MA密集度  : **{c['congestion_width']:.2f}%** (基準: 5%以下 / 密集継続: {c['congestion_duration']}営業日)\n"
-        body += f"  ・RSI(14)   : {c['rsi14']:.1f}% / BB幅: {c['bb_width']:.1f}% / 出来高比率: {c['vol_ratio']:.2f}倍\n"
         body += f"  ・52週高値比: {c['dist_52w']:+.1f}%\n\n"
         
         body += f"📢 **{c['edu_comment']}**\n"
         body += "----------------------------------------\n\n"
 
-    body += "\n※本メールは、チャートの『呼吸（収縮と拡散）』や移動平均線の需給力学を学び、相場感を養うための研究用レポートです。投資の勉強材料としてTradingViewのリンクから実際の形を確認し、イメージを膨らませてください。\n"
+    # --- ⑦: Human Learning Comment（AI先生の定点教育コメント）の差し込み ---
+    body += "\n"
+    body += State5ExplainableEngine.generate_human_learning_summary(candidates)
+    body += "\n"
+    body += "※本メールは、チャートの『呼吸（収縮と拡散）』や移動平均線の需給力学を学び、相場感を養うための研究用レポートです。投資の勉強材料としてTradingViewのリンクから実際の形を確認し、イメージを膨らませてください。\n"
 
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
@@ -310,11 +304,16 @@ def main():
                 df_raw.index = pd.to_datetime(df_raw.index, errors="coerce")
                 df_raw = df_raw.dropna(how="all").sort_index()
                 
-                if len(df_raw) < 150:
+                # 昨日比・一週間前比を計算するため、最低155行必要（150営業日 + 5営業日前遡り用）
+                if len(df_raw) < 155:
                     continue
 
                 d = EarlyStateEngine.calculate_early_indicators(df_raw)
+                
+                # 本日（最新行）、昨日（1行前）、一週間前（5営業日前）のデータを抽出
                 row = d.iloc[-1]
+                row_1d = d.iloc[-2]
+                row_1w = d.iloc[-6]
                 
                 if latest_date is None:
                     latest_date = d.index[-1].strftime("%Y-%m-%d")
@@ -323,7 +322,7 @@ def main():
                 if row["turnover_avg20_million"] < TH_MIN_TURNOVER:
                     continue
 
-                # 最初の10件のみ、進行確認のためにログをプリント（Actionsのバッファ肥大化防止）
+                # 最初の10件のみ、進行確認のためにログをプリント
                 if debug_print_count < 10:
                     print(f"  [デバッグ] 銘柄 {t} ➔ データ行数: {len(df_raw)} / 20日平均売買代金: {row['turnover_avg20_million']:.2f} 百万円 (しきい値: {TH_MIN_TURNOVER:.2f} 百万円)")
                     debug_print_count += 1
@@ -332,7 +331,6 @@ def main():
                 if True:
                     s25, s75, s200 = EducationalAnalyzer.get_ma_slope_symbols(row)
                     trend_stage = EducationalAnalyzer.get_trend_stage(row, s25, s75, s200)
-                    comp_score = EducationalAnalyzer.calculate_compression_score(row)
                     readiness = EducationalAnalyzer.get_expansion_readiness(row, s25, s75, s200)
                     
                     if hasattr(State5ExplainableEngine, "get_chart_pattern"):
@@ -342,7 +340,28 @@ def main():
                         
                     edu_comment = EducationalAnalyzer.generate_educational_comment(row, trend_stage, chart_pattern)
                     
-                    # 【Version 7.23新設】：大化けデータベースから自動逆引き (安全なフォールバック付き)
+                    # --- ②: Change Detection Engine (昨日比、1週間前比の差分Δの算出) ---
+                    # 1. Compression Score 差分
+                    comp_today = int(row["compression_score"])
+                    chg_score_1d = comp_today - int(row_1d["compression_score"])
+                    chg_score_1w = comp_today - int(row_1w["compression_score"])
+                    
+                    # 2. RSI 差分
+                    rsi_today = float(row["rsi14"])
+                    chg_rsi_1d = rsi_today - float(row_1d["rsi14"])
+                    chg_rsi_1w = rsi_today - float(row_1w["rsi14"])
+                    
+                    # 3. 出来高比率 差分
+                    vol_today = float(row["vol_ratio_20"])
+                    chg_vol_1d = vol_today - float(row_1d["vol_ratio_20"])
+                    chg_vol_1w = vol_today - float(row_1w["vol_ratio_20"])
+                    
+                    # 4. BB幅 差分
+                    bb_today = float(row["bb_width"])
+                    chg_bb_1d = bb_today - float(row_1d["bb_width"])
+                    chg_bb_1w = bb_today - float(row_1w["bb_width"])
+
+                    # 【Version 7.23新設】：大化けデータベースから自動逆引き
                     if hasattr(State5ExplainableEngine, "get_type0_matching_rate"):
                         type0_match = State5ExplainableEngine.get_type0_matching_rate(row)
                     else:
@@ -358,22 +377,31 @@ def main():
                         "name": name_map.get(t, t),
                         "congestion_width": row["ma_congestion_width_pct"],
                         "congestion_duration": int(row["congestion_duration"]) if not pd.isna(row["congestion_duration"]) else 0,
-                        "rsi14": row["rsi14"],
-                        "bb_width": row["bb_width"],
-                        "vol_ratio": row["vol_ratio_20"],
+                        "rsi14": rsi_today,
+                        "bb_width": bb_today,
+                        "vol_ratio": vol_today,
                         "dist_to_52w_high": row["dist_to_52w_high"],
                         "dist_52w": row["dist_to_52w_high"],
                         "ma75": row["ma75"],
                         "s25": s25, "s75": s75, "s200": s200,
                         "trend_stage": trend_stage,
-                        "compression_score": comp_score,
+                        "compression_score": comp_today,
                         "readiness": readiness,
                         "edu_comment": edu_comment,
-                        "similar_winners_desc": similar_winners_desc
+                        "similar_winners_desc": similar_winners_desc,
+                        
+                        # Change Detection 差分データを辞書に格納
+                        "chg_score_1d": chg_score_1d,
+                        "chg_score_1w": chg_score_1w,
+                        "chg_rsi_1d": chg_rsi_1d,
+                        "chg_rsi_1w": chg_rsi_1w,
+                        "chg_vol_1d": chg_vol_1d,
+                        "chg_vol_1w": chg_vol_1w,
+                        "chg_bb_1d": chg_bb_1d,
+                        "chg_bb_1w": chg_bb_1w
                     })
             except Exception as e:
                 import traceback
-                # ログを汚さないよう、最初の3件の不測エラーのみエラー箇所をスタックトレース付きで克明にログ表示します
                 if error_count < 3:
                     error_count += 1
                     print(f"\n[デバッグ警告] 銘柄 {t} の処理中に例外（エラー）を検知しました:")
@@ -394,11 +422,9 @@ def main():
         try:
             print("\n=== Version 7.22: 予備軍（Early Watch）の自動成績追跡・進化判定を起動します ===")
             
-            # 1. 今朝検出された5件の予備軍を自動保存（※引数エラーを完全に解決）
             from early_history_logger import EarlyHistoryLogger
             EarlyHistoryLogger.log_early_candidates(priority_candidates, latest_date, config)
             
-            # 2. 過去の予備軍の自動追跡・採点 ＆ 進化・失敗判定
             from early_performance_tracker import EarlyPerformanceTracker
             evolution_alerts = EarlyPerformanceTracker.track_and_detect_evolutions(config)
             
