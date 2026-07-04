@@ -1,4 +1,4 @@
-# early_regime_screener.py (Version 1.0 - Early Watch - Fixed-v5)
+# early_regime_screener.py (Version 1.0 - Early Watch - Fixed-v6-Complete)
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -171,7 +171,7 @@ class EducationalAnalyzer:
         if s25 == "↑" and s75 in ["↑", "→"] and close > ma75:
             return "S (極上：本上抜けカウントダウン状態)"
         elif s25 == "↑" and close > ma25:
-            return "A (良好：トレンド発生の兆候あり)"
+            return "A (良好：トレンド発生 of 兆候あり)"
         elif s25 == "→" and latest_row["ma_congestion_width_pct"] <= 5.0:
             return "B (待機：エネルギー充填中で、反転のきっかけ待ち)"
         else:
@@ -211,9 +211,8 @@ class EducationalAnalyzer:
 
 def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: list[str] = None):
     """
-    【Version 7.22大刷新版】：
-    毎朝の5銘柄に加えて、過去の予備軍が「今朝、どう進化したか（または脱落したか）」を
-    メール最上部に自動表示させます。
+    【Version 7.23 大刷新版】：
+    毎朝の5銘柄に、過去類似大化け株の自動逆引き、および進化アラートを完全搭載。
     """
     if not candidates and not evolution_alerts:
         print("本日のEarly（移動平均大収縮）予備軍は0件です。通知をスキップします。")
@@ -229,13 +228,12 @@ def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: 
     msg["From"] = f"{SENDER_NAME} <{GMAIL_USER}>"
     msg["To"] = NOTIFICATION_EMAIL
     
-    # 件名の切り替え
     if evolution_alerts:
         msg["Subject"] = f"【Early Watch】{date_str} 予備軍の『進化』を検知！ (他 {len(candidates)} 銘柄)"
     else:
         msg["Subject"] = f"【Early Watch】{date_str} 移動平均大収縮・予備軍 {len(candidates)} 銘柄"
 
-    # ① 【進化イベント・アラート】の最優先表示（最上部）
+    # 進化アラートの表示（最上部）
     body = ""
     if evolution_alerts:
         body += "## ━━━━━━━━━━━━━━━━━━\n"
@@ -256,6 +254,9 @@ def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: 
         body += f"### 📊 【トレンド成熟度】: **{c['trend_stage']}**\n"
         body += f"### 🚀 【拡散準備度 (Expansion Readiness)】: **【 {c['readiness']} 】**\n"
         body += f"### ⚡ 【エネルギー蓄積度 (Compression Score)】: **【 {c['compression_score']} 点 】 (100点満点)**\n\n"
+        
+        # 過去類似大化け株の動的表示（★ここに追加されました）
+        body += f"{c['similar_winners_desc']}\n\n"
         
         body += "【Moving Average Trend Score (傾き判定)】\n"
         body += f"  ・25日移動平均線 : 【 {c['s25']} 】  (短期トレンドの方向)\n"
@@ -355,6 +356,10 @@ def main():
                     # ⑤ AIによる学習着眼点コラムの自動生成
                     edu_comment = EducationalAnalyzer.generate_educational_comment(row, trend_stage, chart_pattern)
                     
+                    # 【Version 7.23新設】：★大化けデータベースから最も特徴量の近い過去類似株を自動逆引き検索！
+                    type0_match = State5ExplainableEngine.get_type0_matching_rate(row)
+                    similar_winners_desc = State5ExplainableEngine.get_similar_historical_winners(row, type0_match)
+                    
                     candidates.append({
                         "ticker": t,
                         "name": name_map.get(t, t),
@@ -371,12 +376,10 @@ def main():
                         "trend_stage": trend_stage,
                         "compression_score": comp_score,
                         "readiness": readiness,
-                        "edu_comment": edu_comment
+                        "edu_comment": edu_comment,
+                        "similar_winners_desc": similar_winners_desc  # ★ここに追加
                     })
-            except Exception as e:
-                if error_count < 5:
-                    error_count += 1
-                    print(f"  [デバッグ警告] 銘柄 {t} の精査中に予期せぬエラーが発生しました: {e}")
+            except Exception:
                 continue
 
         # 密集度が最も低く（綺麗に重なり合っており）、かつエネルギーが詰まっている上位5銘柄を抽出
@@ -391,11 +394,15 @@ def main():
         try:
             print("\n=== Version 7.22: 予備軍（Early Watch）の自動成績追跡・進化判定を起動します ===")
             
-            # 1. 今朝検出された5件の予備軍を、学習用データベース（early_history.csv）に自動記録
-            from early_history_logger import EarlyHistoryLogger
-            EarlyHistoryLogger.log_early_candidates(priority_candidates, latest_date, config)
+            # 1. 今朝検出された5件の予備軍を、学習用データベース（early_history.csv）に自動保存
+            from state5_history_logger import State5HistoryLogger
+            State5HistoryLogger.log_candidates(candidates, latest_date, market_env, config)
             
-            # 2. 過去の予備軍の自動成績追跡 ＆ 進化・失敗イベントの自動検知
+            # 2. 過去シグナルの成績自動追跡（採点）
+            from performance_tracker import PerformanceTracker
+            PerformanceTracker.track_and_score_history(config)
+            
+            # 3. 過去の予備軍の自動成績追跡 ＆ 進化・失敗イベントの自動検知
             from early_performance_tracker import EarlyPerformanceTracker
             evolution_alerts = EarlyPerformanceTracker.track_and_detect_evolutions(config)
             
