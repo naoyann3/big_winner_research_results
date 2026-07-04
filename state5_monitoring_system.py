@@ -146,7 +146,8 @@ class MarketStateEngine:
             elif current_state == 4:
                 if close < row["Open"] and vol_ratio < 1.0: next_state = 5
             elif current_state == 5:
-                if close > high_20d workshops and vol_ratio >= 1.5: next_state = 6
+                # 👇 【修正点】：不要な「workshops」を削除し、変数名 high_20d に修正
+                if close > high_20d and vol_ratio >= 1.5: next_state = 6
                 
             if next_state != current_state:
                 current_state = next_state
