@@ -363,7 +363,17 @@ def main():
                         "edu_comment": edu_comment,
                         "similar_winners_desc": similar_winners_desc  # 追加
                     })
-            except Exception:
+            # --- 修正デバッグコード ---
+            except Exception as e:
+                import traceback
+                # ログの肥大化を防ぐため、エラーが発生した最初の3銘柄だけ「本当の犯人（エラー内容）」を詳細に出力します
+                if error_count < 3:
+                    error_count += 1
+                    print(f"\n[デバッグ警告] 銘柄 {t} の処理中に例外（エラー）を検知しました:")
+                    print(f"エラー内容: {e}")
+                    print("--- スタックトレース（発生場所） ---")
+                    print(traceback.format_exc())
+                    print("-----------------------------------\n")
                 continue
 
         if candidates:
