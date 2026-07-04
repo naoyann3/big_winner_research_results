@@ -41,7 +41,7 @@ class State5ExplainableEngine:
         _, stats_str = cls.get_market_expectancy_and_stats(market_state, config)
         
         env_map = {
-            "Bull": ("★★★★★ 追い風 (Bull)", "市場全体が強気の上昇トレンドです。State 5の押し目から本上昇（State 6）へのブレイク成功率が極めて高く、利益幅も最大化しやすい「投資のゴールデン地合い」です。"),
+            "Bull": ("★★★★★ 追い風 (Bull)", "市場全体が強気の上上昇トレンドです。State 5の押し目から本上昇（State 6）へのブレイク成功率が極めて高く、利益幅も最大化しやすい「投資のゴールデン地合い」です。"),
             "Bear": ("★☆☆☆☆ 向かい風 (Bear)", "全体の売り圧力が極めて強い下降トレンドです。個別株の仕掛けが地合いの急落に巻き込まれてドロップ（失敗）する危険性が有意に高いため、厳格な防衛（見送り）が必要です。"),
             "Range": ("★★★☆☆ 穏やかな地合い (Range)", "方向感のないもみ合い相場です。地合いのサポートは期待できません。徹底した個別銘柄の『極限収縮（Type 0一致率）』のみが勝敗を分けます。"),
             "Neutral": ("★★★☆☆ 穏やかな地合い (Neutral)", "地合いからの風速は穏やかであり、確率統計通りの標準的な期待値がそのまま推移します。")
@@ -398,11 +398,35 @@ class State5ExplainableEngine:
 
         return pros[:3], cons[:3]
 
+    @staticmethod
+    def get_type0_matching_rate(latest_row: pd.Series) -> int:
+        """
+        黄金仕込み【Type 0】（出来高0.66倍、RSI 55%、BB幅7.5%）との一致率を算出（0〜100%）
+        """
+        try:
+            vol = float(latest_row["vol_ratio_20"]) if "vol_ratio_20" in latest_row else 1.0
+            rsi = float(latest_row["rsi14"]) if "rsi14" in latest_row else 50.0
+            bb = float(latest_row["bb_width"]) if "bb_width" in latest_row else 10.0
+            
+            # 各指標の目標値からの乖離度を算出（100点からの減点方式）
+            # 1. 出来高比率 (目標 0.66) -> 0.1の乖離ごとに10点減点（最大30点）
+            vol_penalty = min(30.0, abs(vol - 0.66) * 100)
+            
+            # 2. RSI (目標 55.0) -> 1%の乖離ごとに1.5点減点（最大35点）
+            rsi_penalty = min(35.0, abs(rsi - 55.0) * 1.5)
+            
+            # 3. ボリンジャーバンド幅 (目標 7.5%) -> 1%の乖離ごとに3.0点減点（最大35点）
+            bb_penalty = min(35.0, abs(bb - 7.5) * 3.0)
+            
+            score = 100.0 - (vol_penalty + rsi_penalty + bb_penalty)
+            return int(max(0.0, min(100.0, score)))
+        except Exception:
+            return 50  # 予期せぬエラー時は中央値をフォールバックとして返す
+
     @classmethod
     def get_similar_historical_winners(cls, latest_row: pd.Series, matching_rate: int) -> str:
         """
-        ⑤ & ⑥：【バグ解決・本物の動的逆引き検索エンジンを実装】
-        過去の state5_history.csv データベースから、今回の銘柄に最もチャート特徴量が
+        ⑤ & ⑥：過去の state5_history.csv データベースから、今回の銘柄に最もチャート特徴量が
         類似した（ユークリッド距離が最も近かった）過去の実際の成功・失敗銘柄を
         3件自動検知し、その後のリターン（実績）とともに表示します。
         """
@@ -490,7 +514,6 @@ class State5ExplainableEngine:
     analyze_pros_and_cons = get_pros_and_cons
 
 
-# ↓↓↓ 【バグ修正点：ファイルの一番最後、左端（インデントなし）でこのようにエイリアスを定義します】 ↓↓↓
-# これにより、クラス評価の段階での NameError を 100% 完全に消滅させます。
+# クラス評価段階での NameError を消滅させるための後方互換エイリアス
 State5ExplainableEngine.detect_chart_pattern = State5ExplainableEngine.get_chart_pattern
 State5ExplainableEngine.analyze_pros_and_cons = State5ExplainableEngine.get_pros_and_cons
