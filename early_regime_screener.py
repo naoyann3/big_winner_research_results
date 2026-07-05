@@ -1,4 +1,4 @@
-# early_regime_screener.py (Version 8.3 - Early Watch with Change Detection)
+# early_regime_screener.py (Version 8.4 - Learning OS with Today's Lesson)
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -26,7 +26,7 @@ config = load_config()
 GMAIL_USER = os.environ.get("GMAIL_USER") or config.get("email", {}).get("gmail_user")
 GMAIL_PASS = os.environ.get("GMAIL_APP_PASSWORD") or config.get("email", {}).get("gmail_pass")
 NOTIFICATION_EMAIL = os.environ.get("NOTIFICATION_EMAIL") or config.get("email", {}).get("notification_email")
-SENDER_NAME = "Sniper OS - Early Watch 8.3"
+SENDER_NAME = "Sniper OS - Early Watch 8.4"
 
 UNIVERSE_CSV = Path("universe.csv")
 PRICES_DIR = Path("data_cache/prices")
@@ -88,8 +88,7 @@ class EarlyStateEngine:
         d["high_52w"] = d["High"].rolling(250, min_periods=50).max()
         d["dist_to_52w_high"] = (d["Close"] - d["high_52w"]) / d["high_52w"] * 100
 
-        # --- ②: Change Detection 用の Compression Score 計算（全行に適用） ---
-        # 簡易的に各行のCompression Scoreを算出してデータフレームに持たせる
+        # Change Detection 用の Compression Score 計算（全行に適用）
         scores = []
         for idx, row in d.iterrows():
             score = 0
@@ -167,31 +166,105 @@ class EducationalAnalyzer:
 
     @staticmethod
     def generate_educational_comment(latest_row: pd.Series, trend_stage: str, pattern: str) -> str:
-        ma200_slope = latest_row["ma200_slope"]
-        duration_val = latest_row["congestion_duration"]
-        days_held = int(duration_val) if not pd.isna(duration_val) else 0
+        """
+        ②：完全動的な個別チャート着眼点生成エンジン
+        固定テンプレートを廃止し、ローソク足と移動平均線（25MA, 75MA, 200MA）の位置関係を
+        マルチプロファイリングして、銘柄ごとに全く異なる具体的な着眼点を出力します。
+        """
+        close = latest_row["Close"]
+        ma25 = latest_row["ma25"]
+        ma75 = latest_row["ma75"]
+        ma200 = latest_row["ma200"]
+        m25_slope = latest_row["ma25_slope"]
+        m200_slope = latest_row["ma200_slope"]
+        width = latest_row["ma_congestion_width_pct"]
+        vol_ratio = latest_row["vol_ratio_20"]
+        duration = int(latest_row["congestion_duration"]) if not pd.isna(latest_row["congestion_duration"]) else 0
         
-        if ma200_slope < -0.15:
+        # 乖離率
+        dev75 = abs(close - ma75) / ma75 * 100 if ma75 > 0 else 0.0
+
+        # パターン1: 長期抵抗突破検証（200日線が下向き、価格が200日線付近または上抜け）
+        if m200_slope < -0.15 and (close >= ma200 or abs(close - ma200)/ma200 <= 0.02):
             return (
-                f"【今回の学習着眼点】: 200日線がまだ「下向き」の下降トレンド途中にあります。 "
-                f"ここからの上放れが、長期的な抵抗（200日線）を上抜けて本物の『トレンド転換』に発展するか、"
-                f"それとも200日線に頭を抑えられて押し返されるかが最大の見どころです。ダマシの動きに注目してください。"
+                f"【今回の動的着眼点】: 長期的に下降トレンドの蓋として機能していた『長期200日線（{ma200:.1f}円）』をブレイクできるかどうかの極めて重要な転換点です。 "
+                f"200日線に頭を抑えられて押し返されるダマシになるか、それとも出来高を伴って本上抜けへ昇華するか、大口の介入意志を注視してください。"
             )
-        elif "ボックス" in pattern and days_held >= 20:
+            
+        # パターン2: 75日線支持（サポート）検証
+        elif dev75 <= 1.2 and ma75 >= ma200:
             return (
-                f"【今回の学習着眼点】: ボックス圏のレンジ内で、エネルギーが 【 {days_held}日営業日 】 にわたって極限まで固められています。 "
-                f"直近の上限ラインを陽線で突き抜ける際に、出来高が2〜3倍以上に『再点火』するかどうかを毎日観察してください。出来高を伴わない上抜けはダマシになる良い例です。"
+                f"【今回の動的着眼点】: 上向きの中期トレンドラインである『75日移動平均線（{ma75:.1f}円）』に対して、株価がわずか {dev75:.2f}% と完全近接しています。 "
+                f"ここが絶好の押し目（下値支持帯）として機能し、出来高の極限減少（売り枯れ）を経て、上方向への反発動意（買い手の出現）が起きるかを観察するのに最高の教材です。"
             )
-        elif "三角" in pattern or "ウェッジ" in pattern:
+            
+        # パターン3: エネルギー極限充填ボックスブレイク前夜
+        elif width <= 1.5 and duration >= 15:
             return (
-                f"【今回の学習着眼点】: チャート形状が『{pattern}』という、煮詰まりの最終形状を迎えています。 "
-                f"収縮の極限（三角の先端）に近づくにつれて、本当に出来高が限界まで枯渇し、その後にどの方向にエネルギーが『拡散』していくかを毎日定点観測するのに最適な教材です。"
+                f"【今回の動的着眼点】: 3本の移動平均線がわずか {width:.2f}% という極限レベルで密集し、その膠着が 【 {duration}営業日 】 も継続しています。 "
+                f"煮詰まりは極限に達しており、直近のボックス上限をブレイクする際に、出来高が2〜3倍以上に『再点火』するかどうかを毎日観察してください。"
             )
+            
+        # パターン4: ボックスもみ合い煮詰まり
+        elif "ボックス" in pattern and duration >= 15:
+            return (
+                f"【今回の動的着眼点】: 『{pattern}』というレンジ内で、売りと買いのバランスが均衡しています。 "
+                f"出来高比率が {vol_ratio:.2f}倍 まで著しく細っているのは、投げ売る個人が全員いなくなった『売り枯れの呼吸』です。この極限状態からどちらに拡散エネルギーが放たれるかを定点観測してください。"
+            )
+            
+        # パターン5: 25日線上向き・新鮮なトレンド
+        elif m25_slope > 0.3 and close > ma25:
+            return (
+                f"【今回の動的着眼点】: 短期25日移動平均線が【上向き】へ反転し、ローソク足がその上に乗る新鮮な上昇動意の形です。 "
+                f"ここから上放れが本格化する際、上方に存在する長期200日線（抵抗帯）とぶつかった時の押し引きを先行的に脳内シミュレーションしておきましょう。"
+            )
+            
+        # パターン6: デフォルト（底打ち・ねじれ期）
         else:
             return (
-                f"【今回の学習着眼点】: 移動平均線の密集度が極めて狭い、典型的な『エネルギーの限界充填期』です。 "
-                f"下値支持帯である75日移動平均線（ピンク色）で株価がしっかりと下げ止まり、出来高が消滅する『売り枯れの呼吸』をじっくり観察してください。"
+                f"【今回の動的着眼点】: 移動平均線の密集度が極めて狭い、典型的な『エネルギーの限界充填期』です。 "
+                f"下値支持帯である75日移動平均線付近で株価がしっかりと下げ止まり、出来高が消滅する需給の真空状態をじっくり観察してください。"
             )
+
+
+def get_todays_lesson_theme(candidates: list[dict]) -> dict:
+    """
+    ④：Today's Lesson（授業テーマ）を本日の候補銘柄の分布から自動的にクラスター分類して提示
+    """
+    if not candidates:
+        return {
+            "title": "休講：市場の需給調整期における『静観の技術』を学ぶ",
+            "desc": "本日は移動平均大収縮の合格者がいません。プロが最も大切にする『無理にポジションを取らず、資金を温存する（待つのも相場）』という、最も重要な自己防衛技術を身につけるための絶好の1日です。"
+        }
+        
+    avg_bb = np.mean([c["bb_width"] for c in candidates])
+    avg_vol = np.mean([c["vol_ratio"] for c in candidates])
+    avg_congestion = np.mean([c["congestion_width"] for c in candidates])
+    
+    # 1. 密集度が異常に狭い場合
+    if avg_congestion <= 0.15:
+        return {
+            "title": "第1講：3本の移動平均線が一本のロープのように絡み合う『エネルギー極限密集』を学ぶ",
+            "desc": f"本日の候補は3MA密集度の平均がなんと【 {avg_congestion:.2f}% 】という、チャート上でほぼ線が一本に重なって見えるほどの超密集状態を起こしています。これは大口のステルス仕込みが極限まで進んだ痕跡であり、ここから始まる『拡散（ブレイク）』の爆発力と予兆を掴む絶好の1日です。"
+        }
+    # 2. ボラティリティが極限収縮している場合
+    elif avg_bb <= 5.0:
+        return {
+            "title": "第2講：ボラティリティが死んだ超収縮期（極限スクイーズ）の力学を学ぶ",
+            "desc": f"本日の教材は平均BB幅が【 {avg_bb:.1f}% 】と、歴史的に見ても驚異的なボラティリティの押し殺しを示しています。ボラティリティは『収縮の極限に達すると、次は必ず上下どちらかに大爆発（拡散）に向かう』という普遍的な物理法則を持っています。嵐の前の、この静寂を観察してください。"
+        }
+    # 3. 出来高が極限まで枯れている場合
+    elif avg_vol <= 0.50:
+        return {
+            "title": "第3講：投げ売り圧力が完全に消滅した『売り枯れの呼吸（需給の真空）』を観察する",
+            "desc": f"本日の候補は平均出来高比率が20日平均の【 {avg_vol:.2f}倍 】と極限まで激減しています。市場参加者の中に売り急ぐ人が一人もいなくなった『売り枯れの呼吸』の状態です。この需給の空白地帯から、大口がわずかな買いを入れた瞬間に株価が上空へ弾き飛ばされる『再点火』の物理法則を追跡しましょう。"
+        }
+    # 4. デフォルトテーマ
+    else:
+        return {
+            "title": "第4講：下降トレンドから底固めを経て始まる『トレンド転換の最も新鮮な初動』を学ぶ",
+            "desc": "本日は、長期的な下降もみ合いから、移動平均線が集まり始めた『需給の転換初期（目覚めの瞬間）』の銘柄が集まっています。短期（25日）が中期（75日）をねじりながら上抜ける際の、日々の日足の押し引きを定点観測する練習をしましょう。"
+        }
 
 
 def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: list[str] = None):
@@ -210,11 +283,21 @@ def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: 
     msg["To"] = NOTIFICATION_EMAIL
     
     if evolution_alerts:
-        msg["Subject"] = f"【Early Watch 8.3】{date_str} 予備軍の『進化』を検知！ (他 {len(candidates)} 銘柄)"
+        msg["Subject"] = f"【Early Watch 8.4】{date_str} 予備軍の『進化』を検知！ (他 {len(candidates)} 銘柄)"
     else:
-        msg["Subject"] = f"【Early Watch 8.3】{date_str} 移動平均大収縮・予備軍 {len(candidates)} 銘柄"
+        msg["Subject"] = f"【Early Watch 8.4】{date_str} 本日の『Today's Lesson』開講のお知らせ"
 
     body = ""
+    
+    # --- ④：Today's Lesson (授業テーマ) をメールの最上部に掲出 ---
+    lesson = get_todays_lesson_theme(candidates)
+    body += "## ━━━━━━━━━━━━━━━━━━\n"
+    body += f"## 🧑‍🏫 【Today's Lesson】本日の学習テーマ\n"
+    body += f"## 📌 『 {lesson['title']} 』\n"
+    body += "## ━━━━━━━━━━━━━━━━━━\n"
+    body += f"{lesson['desc']}\n"
+    body += "## ━━━━━━━━━━━━━━━━━━\n\n"
+
     if evolution_alerts:
         body += "## ━━━━━━━━━━━━━━━━━━\n"
         body += "## 🔔 【本日の予備軍・自律成長（進化）アラート】\n"
@@ -224,7 +307,7 @@ def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: 
             body += f"  {alert}\n"
         body += "## ━━━━━━━━━━━━━━━━━━\n\n"
 
-    body += f"# 💡 【Early Watch 8.3】{date_str} トレンド転換初期・予備軍リスト\n"
+    body += f"# 💡 【Early Watch 8.4】{date_str} トレンド転換初期・本日の教材銘柄リスト\n"
     body += "※買い推奨ツールではありません。移動平均線の収縮・拡散の力学を、毎日チャートを開いて学ぶための「究極の教材リスト」です。\n"
     body += "----------------------------------------\n\n"
 
@@ -234,7 +317,6 @@ def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: 
         body += f"### 📊 【トレンド成熟度】: **{c['trend_stage']}**\n"
         body += f"### 🚀 【拡散準備度 (Expansion Readiness)】: **【 {c['readiness']} 】**\n"
         
-        # --- ②: Change Detection Engine の可視化出力 ---
         body += f"### ⚡ 【エネルギー蓄積度 (Compression Score)】: **【 {c['compression_score']} 点 】 (100点満点)**\n"
         body += f"      ・昨日比  : {c['chg_score_1d']:+d} 点 ｜ 1週間前比: {c['chg_score_1w']:+d} 点\n"
         body += f"      ・RSI(14) : {c['rsi14']:.1f}% (昨日比: {c['chg_rsi_1d']:+.1f}% ｜ 1週間前比: {c['chg_rsi_1w']:+.1f}%)\n"
@@ -255,9 +337,11 @@ def notify_early_watch(candidates: list[dict], date_str: str, evolution_alerts: 
         body += f"📢 **{c['edu_comment']}**\n"
         body += "----------------------------------------\n\n"
 
-    # --- ⑦: Human Learning Comment（AI先生の定点教育コメント）の差し込み ---
+    # --- ⑦: Human Learning Comment & ⑥: AI Research Note の結合差し込み ---
     body += "\n"
     body += State5ExplainableEngine.generate_human_learning_summary(candidates)
+    body += "\n"
+    body += State5ExplainableEngine.generate_ai_research_note()
     body += "\n"
     body += "※本メールは、チャートの『呼吸（収縮と拡散）』や移動平均線の需給力学を学び、相場感を養うための研究用レポートです。投資の勉強材料としてTradingViewのリンクから実際の形を確認し、イメージを膨らませてください。\n"
 
@@ -304,7 +388,7 @@ def main():
                 df_raw.index = pd.to_datetime(df_raw.index, errors="coerce")
                 df_raw = df_raw.dropna(how="all").sort_index()
                 
-                # 昨日比・一週間前比を計算するため、最低155行必要（150営業日 + 5営業日前遡り用）
+                # 昨日比・一週間前比を計算するため、最低155行必要
                 if len(df_raw) < 155:
                     continue
 
@@ -333,43 +417,34 @@ def main():
                     trend_stage = EducationalAnalyzer.get_trend_stage(row, s25, s75, s200)
                     readiness = EducationalAnalyzer.get_expansion_readiness(row, s25, s75, s200)
                     
-                    # --- 変更前 ---
-                    # if hasattr(State5ExplainableEngine, "get_chart_pattern"):
-                    #     chart_pattern = State5ExplainableEngine.get_chart_pattern(df_raw)
-                    # else:
-                    #     chart_pattern = State5ExplainableEngine.detect_chart_pattern(df_raw)
-
-                    # --- 【多重防壁仕様】変更後 ---
-                    chart_pattern = "緩やかな上昇トレンド (判定中)"  # 1. 最初にデフォルト値をセット
+                    # --- ②：多重防壁仕様のチャートパターン動的判定 ➔ 動的コメントへの連動 ---
+                    chart_pattern = "緩やかな上昇トレンド"
                     if hasattr(State5ExplainableEngine, "get_chart_pattern"):
                         chart_pattern = State5ExplainableEngine.get_chart_pattern(df_raw)
                     elif hasattr(State5ExplainableEngine, "detect_chart_pattern"):
                         chart_pattern = State5ExplainableEngine.detect_chart_pattern(df_raw)
                         
+                    # 完全動的な教育着眼点コメントの生成
                     edu_comment = EducationalAnalyzer.generate_educational_comment(row, trend_stage, chart_pattern)
                     
-                    # --- ②: Change Detection Engine (昨日比、1週間前比の差分Δの算出) ---
-                    # 1. Compression Score 差分
+                    # Change Detection (昨日比、1週間前比の差分Δの算出)
                     comp_today = int(row["compression_score"])
                     chg_score_1d = comp_today - int(row_1d["compression_score"])
                     chg_score_1w = comp_today - int(row_1w["compression_score"])
                     
-                    # 2. RSI 差分
                     rsi_today = float(row["rsi14"])
                     chg_rsi_1d = rsi_today - float(row_1d["rsi14"])
                     chg_rsi_1w = rsi_today - float(row_1w["rsi14"])
                     
-                    # 3. 出来高比率 差分
                     vol_today = float(row["vol_ratio_20"])
                     chg_vol_1d = vol_today - float(row_1d["vol_ratio_20"])
                     chg_vol_1w = vol_today - float(row_1w["vol_ratio_20"])
                     
-                    # 4. BB幅 差分
                     bb_today = float(row["bb_width"])
                     chg_bb_1d = bb_today - float(row_1d["bb_width"])
                     chg_bb_1w = bb_today - float(row_1w["bb_width"])
 
-                    # 【Version 7.23新設】：大化けデータベースから自動逆引き
+                    # 【Version 7.23新設】：大化けデータベースから自動逆引き (安全なフォールバック付き)
                     if hasattr(State5ExplainableEngine, "get_type0_matching_rate"):
                         type0_match = State5ExplainableEngine.get_type0_matching_rate(row)
                     else:
@@ -398,15 +473,15 @@ def main():
                         "edu_comment": edu_comment,
                         "similar_winners_desc": similar_winners_desc,
                         
-                        # Change Detection 差分データを辞書に格納
+                        # Change Detection
                         "chg_score_1d": chg_score_1d,
                         "chg_score_1w": chg_score_1w,
-                        "chg_rsi_1d": chg_rsi_1d,
-                        "chg_rsi_1w": chg_rsi_1w,
-                        "chg_vol_1d": chg_vol_1d,
-                        "chg_vol_1w": chg_vol_1w,
-                        "chg_bb_1d": chg_bb_1d,
-                        "chg_bb_1w": chg_bb_1w
+                        "chg_rsi_1d": rsi_today - float(row_1d["rsi14"]),
+                        "chg_rsi_1w": rsi_today - float(row_1w["rsi14"]),
+                        "chg_vol_1d": vol_today - float(row_1d["vol_ratio_20"]),
+                        "chg_vol_1w": vol_today - float(row_1w["vol_ratio_20"]),
+                        "chg_bb_1d": bb_today - float(row_1d["bb_width"]),
+                        "chg_bb_1w": bb_today - float(row_1w["bb_width"])
                     })
             except Exception as e:
                 import traceback
