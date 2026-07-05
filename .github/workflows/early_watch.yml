@@ -17,6 +17,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: master
+          # ActionsによるGitプッシュを可能にするためにトークンを自動適用
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -36,3 +38,33 @@ jobs:
         run: |
           # 毎晩 sniper_motion.yml が自動で最新化してくれた data_cache を再利用します
           python early_regime_screener.py || echo "Warning: Early Watch failed, logged above."
+
+      # 【最重要・Version 8.3追加】：毎朝のスクリーニング・台帳更新データを確実に自動保存（コミット＆プッシュ）
+      - name: Commit and push changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          # early_history.csv があれば自動保存対象にする
+          if [ -f "early_history.csv" ]; then
+            git add early_history.csv
+          fi
+          
+          # signals_lifecycle.csv があれば自動保存対象にする
+          if [ -f "signals_lifecycle.csv" ]; then
+            git add signals_lifecycle.csv
+          fi
+
+          # 研究結果フォルダ research_results があれば丸ごと自動保存
+          if [ -d "research_results" ]; then
+            git add research_results/
+          fi
+          
+          # 変更（差分）があればコミットしてGitHubに送信
+          if ! git diff --cached --quiet; then
+            # [skip ci] を含めることで、自分自身のコミットでActionsが無限ループするのを防ぎます
+            git commit -m "Auto update daily early watch data [skip ci]"
+            git push origin master
+          else
+            echo "No changes to commit"
+          fi
