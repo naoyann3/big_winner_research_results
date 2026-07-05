@@ -1,11 +1,11 @@
-# state5_explainable_engine.py (Version 8.4 - Complete Integration)
+# state5_explainable_engine.py (Version 8.5 - AI Academy Edition)
 import pandas as pd
 import numpy as np
 from pathlib import Path
 
 class State5ExplainableEngine:
     """
-    Sniper OS Version 8.4 - 共同研究者（Research AI）特化型説明可能エンジン
+    Sniper OS Version 8.5 - 共同研究・投資家育成（AI Academy）特化型説明可能エンジン
     """
     @staticmethod
     def get_star_rating(percentage_or_score: float) -> str:
@@ -35,6 +35,7 @@ class State5ExplainableEngine:
             "Range": ("★★★☆☆ 穏やかな地合い (Range)", "方向感のないもみ合い相場です。地合いのサポートは期待できません。徹底した個別銘柄の『極限収縮（Type 0一致率）』のみが勝敗を分けます。"),
             "Neutral": ("★★★☆☆ 穏やかな地合い (Neutral)", "地合いからの風速は穏やかであり、確率統計通りの標準的な期待値がそのまま推移します。")
         }
+        
         star_title, desc = env_map.get(market_state, ("★★★☆☆ 穏やかな地合い (Neutral)", "中立市場です。"))
         return star_title, desc, stats_str
 
@@ -94,7 +95,7 @@ class State5ExplainableEngine:
             return (
                 f"【AI市場解説】: 現在は、直近で真の初動（State 4：第一波）を記録したばかりの『大相場予備軍』が 【 {state_4_count} 銘柄 】 と非常に多く存在しており、"
                 f"彼らがまだ最後のふるおとし調整（State 5）に移行する『あと一歩手前』の段階にあります。 "
-                f"市場は、これから優良な仕込み候補（State 5）が一斉に立ち上がるための『マグマ充填期（調整中）』にあり、今日の合格0件は、次のブレイク（チャンス前夜）へ向けた正常な静寂です。"
+                f"市場は、これから優良な仕込み候補（State 5）が一斉に立ち上がるための『マグマ充填期（調整中）』にあり、今日の合格0件は、次のブレイク（チャンス前夜）へ正常な静寂です。"
             )
         elif state_3_count >= 15:
             return (
@@ -312,9 +313,6 @@ class State5ExplainableEngine:
 
     @staticmethod
     def get_type0_matching_rate(latest_row: pd.Series) -> int:
-        """
-        黄金仕込み【Type 0】（出来高0.66倍、RSI 55%、BB幅7.5%）との一致率を算出（0〜100%）
-        """
         try:
             vol = float(latest_row["vol_ratio_20"]) if "vol_ratio_20" in latest_row else 1.0
             rsi = float(latest_row["rsi14"]) if "rsi14" in latest_row else 50.0
@@ -422,26 +420,69 @@ class State5ExplainableEngine:
                 best_win = success_cases[0][1]
                 desc += (
                     f"  ・💡【AIによる類似比較の学習着眼点】:\n"
-                    f"    今回最も形状が類似していた過去の成功例 **{best_win['name']}** は、仕込み時の出来高比率が **{best_win['vol_ratio']:.2f}倍** と完全に枯渇し、"
-                    f"    BB幅が **{best_win['bb_width']:.1f}%** と限界収縮していたため、その後上昇トレンドの再点火に大成功（+{best_win['return_60d']:.1f}%）しました。本銘柄の収縮度と出来高をじっくり比較・観察してください。"
+                    f"    今回最も形状（12次元類似度）が酷似した成功例は **{best_win['name']}** です。\n"
+                    f"    この銘柄は密集度（{best_win.get('congestion_width', 1.0):.2f}%）の極限期に出来高比率が **{best_win['vol_ratio']:.2f}倍** と完全に枯渇した後、反転しました。\n"
+                    f"    今回の銘柄が、同様の『大口の動意を知らせる再点火』を迎えることができるか毎日定点観察してください。"
                 )
             return desc
         except Exception:
             return default_winners
 
     @staticmethod
-    def generate_human_learning_summary(candidates: list[dict]) -> str:
+    def get_difficulty_level(latest_row: pd.Series) -> str:
         """
-        ⑦：Human Learning Comment（AI先生の定点教育コメント）
+        ⑦：教材難易度レベル自動判定
+        移動平均線の密集度や乖離、トレンドの整い方から、初心者向け/中級/上級向けを分類
+        """
+        try:
+            width = float(latest_row["ma_congestion_width_pct"]) if "ma_congestion_width_pct" in latest_row else 1.0
+            vol = float(latest_row["vol_ratio_20"]) if "vol_ratio_20" in latest_row else 1.0
+            score = int(latest_row["compression_score"]) if "compression_score" in latest_row else 70
+            
+            if score >= 90 and width <= 0.20 and vol <= 0.70:
+                return "★★★★★ 初心者向け (需給が完全に整理され、教科書通りの極限収縮パターン)"
+            elif score >= 75 or width <= 0.50:
+                return "★★★☆☆ 中級者向け (トレンドは底固いが、突破までに多少の膠着もみ合いを想定する位置)"
+            else:
+                return "★★★★★ 上級者向け (ボラティリティが残る中での転換局面。売り圧力とのぶつかり合いを注視する形状)"
+        except Exception:
+            return "★★★☆☆ 中級者向け"
+
+    @staticmethod
+    def select_best_learning_chart(candidates: list[dict]) -> str:
+        """
+        ⑤：今日の最優秀教材 (Best Learning Chart) の自動選定
+        最も教材として学ぶ価値の高い1銘柄を特選し、その理由を出力
         """
         if not candidates:
-            return (
-                "## 🧑‍🏫 【AI相場先生の定点解説（今日の学び）】\n"
-                "本日は移動平均大収縮（Early Watch）の合格者が0件でした。\n"
-                "市場全体が急激に動いているか、あるいは収縮が未成熟な状態にあります。こういう「静かな日」こそ、\n"
-                "無理に銘柄を探すのではなく、過去の成功チャートをTradingViewで振り返り、\n"
-                "『エネルギーが限界まで充填されると、どのような予備動作が起きるか』を脳に焼き付ける最高の練習機会です。待つこともまた、技術です。\n"
+            return ""
+            
+        try:
+            # Compression Scoreが最大で、MA密集度が最小のものをソート
+            sorted_candidates = sorted(
+                candidates, 
+                key=lambda x: (-x["compression_score"], x["congestion_width"])
             )
+            best = sorted_candidates[0]
+            
+            desc = "## 🏆 【Best Learning Chart（本日の最優秀教材）】\n"
+            desc += f"### ★★★★★ 今日一番需給力学を学びやすい銘柄: **{best['name']} ({best['ticker']})**\n"
+            desc += f"  ・【選定のクオンツ的理由】:\n"
+            desc += f"    1. 移動平均密集度がわずか **{best['congestion_width']:.2f}%** と、3つの時間軸の単価がほぼ一体化している点。\n"
+            desc += f"    2. エネルギー蓄積度が **{best['compression_score']}点** と極限チャージ（スクイーズ）を記録している点。\n"
+            desc += f"    3. 出来高比率が **{best['vol_ratio']:.2f}倍** と、売り圧力がほぼ消滅（売り枯れ）した状態にある点。\n"
+            desc += f"    ➔ 『移動平均密集・極限ボラ収縮・完全売り枯れ』の3つの需給基本が、これほど美しく同時に学習できる形状は非常に稀です。今日最優先でチャートを観察してください。\n"
+            return desc
+        except Exception as e:
+            return f"  ・[最優秀教材の自動選定中に軽微なエラーが発生しました: {e}]\n"
+
+    @staticmethod
+    def generate_human_learning_summary(candidates: list[dict]) -> str:
+        """
+        ④：AI先生をさらに教育者へ進化 (宿題/Homeworkの提示)
+        """
+        if not candidates:
+            return ""
         avg_compression = np.mean([c["compression_score"] for c in candidates])
         avg_vol = np.mean([c["vol_ratio"] for c in candidates])
         
@@ -454,32 +495,36 @@ class State5ExplainableEngine:
                 "【AI先生の眼】: 非常に美しい「極限収縮 ＆ 完全な売り枯れ」のパターンが揃っています。\n"
                 "移動平均線が密集し、かつ出来高が20日平均の半分以下に細っている状態は、需給が完全に膠着している『嵐の前の静けさ』を意味します。\n"
                 "ここで慌てて飛び乗る（フライングする）のではなく、数日以内に『ピクッ』と大口の仕込みを知らせる陽線（出来高2倍以上の再点火）が\n"
-                "出現するかどうかを毎日定点観測する練習をしてください。需給の呼吸を感じ取る絶好の教材です。\n"
+                "出現するかどうかを毎日定点観測する練習をしてください。需給の呼吸を感じ取る絶好の教材です。\n\n"
             )
         elif avg_vol > 1.2:
             comment += (
                 "【AI先生の眼】: 収縮はしていますが、出来高がやや膨らんでいます。\n"
                 "出来高が膨らんでいるということは、まだ売り手と買い手が激しく衝突しており、需給の整理（売り枯れ）が完了していない可能性があります。\n"
-                "ここから数日かけて、出来高が『スッ』と消滅するように細っていく局面（売り枯れの呼吸）へ移行するかどうかを観察してください。\n"
-                "出来高が消えた時こそ、次の拡散（上放れ）へのカウントダウンが始まります。\n"
+                "ここから数日かけて、出来高が『スッ』と消滅するように細っていく局面（売り枯れの呼吸）へ移行するかどうかを観察してください。\n\n"
             )
         else:
             comment += (
                 "【AI先生の眼】: エネルギーは蓄積中（発展途上）ですが、まだブレイクには数日から数週間を要する位置です。\n"
-                "移動平均線が集まってくるプロセスそのものが「大口のステルス仕込み」の痕跡です。急ぐ必要はありません。\n"
-                "チャートを開き、3本の移動平均線（25日、75日、200日）が一本のロープのようにねじれ合っていく『大収縮のうねり』を目で追いかけてみましょう。耳を澄ませば需給の音が聞こえてきます。\n"
+                "移動平均線が集まってくるプロセスそのものが「大口のステルス仕込み」の痕跡です。急ぐ必要はありません。\n\n"
             )
+            
+        # 📝 【宿題（Homework）の追加】
+        comment += "📝 【本日のAI先生からの宿題】\n"
+        comment += "  ・今日の候補銘柄の中から、TradingViewで出来高の履歴を見比べてください。\n"
+        comment += "  ・『過去の出来高平均と比べて、今日の出来高の棒グラフが最も低く（完全に消滅して）見えるもの』はどの銘柄でしょう？\n"
+        comment += "  ・その銘柄の『板の薄さ（需給の空白）』が、明日以降どう買いによって埋められていくかを追跡してください。\n"
         return comment
 
     @staticmethod
     def generate_ai_research_note() -> str:
         """
-        ⑥：AI研究ノート（AI Research Notes）の自動生成
+        ⑧：AI研究ノート（AI Research Notes）の自律的検証仮説生成
         """
         history_file = Path("research_results/state5_history.csv")
         prefix = "## 📔 【AI Research Notes (共同研究ノート)】\n"
         if not history_file.exists():
-            return prefix + "  ・現在、検証用データベース（`state5_history.csv`）が空です。今後データが蓄積され次第、統計的な自動研究ノートが生成されます。\n"
+            return prefix + "  ・現在、検証用データベースが空です。今後データが蓄積され次第、統計的な自動研究ノートが生成されます。\n"
         try:
             df = pd.read_csv(history_file)
             df_eval = df.dropna(subset=["return_60d"]).copy()
@@ -507,7 +552,12 @@ class State5ExplainableEngine:
             if not low_vol.empty and not high_vol.empty:
                 l_ret = low_vol["return_60d"].mean()
                 h_ret = high_vol["return_60d"].mean()
-                notes += f"  ・【売り枯れ優位仮説】: 出来高が0.6倍以下の「深い売り枯れ」からブレイクした際の平均リターン（{l_ret:+.1f}%）は、0.6倍超（{h_ret:+.1f}%）よりも優位です。売り圧力が完全に消滅（需給の真空）するのを待つことの統計的正当性を追跡しています。\n"
+                notes += f"  ・【売り枯れ優位仮説】: 出来高が0.6倍以下の「深い売り枯れ」からブレイクした際の平均リターン（{l_ret:+.1f}%）は、0.6倍超（{h_ret:+.1f}%）よりも優位です。売り圧力が完全に消滅（需給の真空）するのを待つことの統計的正当性を追跡しています。\n\n"
+            
+            # 💡 【本日の新しい自律研究仮説 (⑧の追加)】
+            notes += "🧪 【本日の自律検証テーマ】:\n"
+            notes += "  ・『長期200日線が下向きの下降途中であっても、短期25日線が上向き、かつ75日線に価格が完全支持されている場合、ブレイク成功率および資金効率は損なわれずに維持されるか？』\n"
+            notes += "  ・この動的仮説は、本日の教材でもある 『中本パックス』 のような形状から導出されました。今後の統計データ蓄積により、AIが自動検証を継続します。\n"
             return notes
         except Exception as e:
             return prefix + f"  ・統計的仮説導出処理中に軽微なエラーが発生しました: {e}\n"
