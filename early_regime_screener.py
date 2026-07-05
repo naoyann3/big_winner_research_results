@@ -333,9 +333,17 @@ def main():
                     trend_stage = EducationalAnalyzer.get_trend_stage(row, s25, s75, s200)
                     readiness = EducationalAnalyzer.get_expansion_readiness(row, s25, s75, s200)
                     
+                    # --- 変更前 ---
+                    # if hasattr(State5ExplainableEngine, "get_chart_pattern"):
+                    #     chart_pattern = State5ExplainableEngine.get_chart_pattern(df_raw)
+                    # else:
+                    #     chart_pattern = State5ExplainableEngine.detect_chart_pattern(df_raw)
+
+                    # --- 【多重防壁仕様】変更後 ---
+                    chart_pattern = "緩やかな上昇トレンド (判定中)"  # 1. 最初にデフォルト値をセット
                     if hasattr(State5ExplainableEngine, "get_chart_pattern"):
                         chart_pattern = State5ExplainableEngine.get_chart_pattern(df_raw)
-                    else:
+                    elif hasattr(State5ExplainableEngine, "detect_chart_pattern"):
                         chart_pattern = State5ExplainableEngine.detect_chart_pattern(df_raw)
                         
                     edu_comment = EducationalAnalyzer.generate_educational_comment(row, trend_stage, chart_pattern)
