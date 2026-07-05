@@ -258,8 +258,6 @@ class State5ExplainableEngine:
         except Exception as e:
             return prefix + f"  ・統計的仮説導出処理中に軽微なエラーが発生しました: {e}\n"
 
-    detect_chart_pattern = get_chart_pattern
-    analyze_pros_and_cons = get_pros_and_cons
 
 State5ExplainableEngine.detect_chart_pattern = State5ExplainableEngine.get_chart_pattern
 State5ExplainableEngine.analyze_pros_and_cons = State5ExplainableEngine.get_pros_and_cons
