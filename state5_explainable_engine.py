@@ -19,20 +19,20 @@ class State5ExplainableEngine:
     @staticmethod
     def get_chart_links(ticker: str) -> dict:
         """
-        各銘柄のTradingView、株探、SBI証券へのクリック1回ダイレクトURLリンクを自動生成
+        各銘柄のTradingView、株探決算、Yahooファイナンス掲示板へのクリック1回ダイレクトURLリンクを自動生成
         (視認性向上のため、3行に分けてインデント整形して出力)
         """
         code = ticker.split(".")[0] if "." in ticker else ticker
         tradingview_url = f"https://jp.tradingview.com/chart/?symbol=TSE:{code}"
-        kabutan_url = f"https://kabutan.jp/stock/?code={code}"
-        sbi_url = f"https://site1.sbisec.co.jp/ETGate/?_ControlID=WPLETmgR001Control&_PageID=WPLETmgR001Mdtl20&_ActionID=defaultAID&getSuryo=1&brand_code={code}"
+        kabutan_url = f"https://kabutan.jp/stock/finance?code={code}"
+        yahoo_url = f"https://finance.yahoo.co.jp/quote/{code}/forum"
         
         # 1行の並びから、視認性と対称性を考慮した「改行インデント形式」に修正します
         all_markdown = (
             f"\n"
             f"      ・📈 [TradingView でチャート分析]({tradingview_url})\n"
             f"      ・📊 [株探 で企業財務・ニュース]({kabutan_url})\n"
-            f"      ・🏦 [SBI証券 で板情報・注文状況]({sbi_url})"
+            f"      ・🏦 [Yahooファイナンス掲示板 で大衆心理]({yahoo_url})"
         )
         return {
             "all_markdown": all_markdown
