@@ -76,7 +76,11 @@ jobs:
             git add signal_performance_report.csv
           fi
 
-          # ↓↓↓【ここから追記します】↓↓↓
+          # 👇 【将来の安全用追記】：宇宙ファイル universe.csv に変更（クレンジング等）があれば自動保存
+          if [ -f "universe.csv" ]; then
+            git add universe.csv
+          fi
+
           # 新設された研究データフォルダ research_results があれば丸ごと自動保存
           if [ -d "research_results" ]; then
             git add research_results/
