@@ -470,8 +470,7 @@ def main():
     # ==========================================
     # ★【Version 8.5.1 新規】：無効銘柄（上場廃止等）の自動永久追放（自己浄化） ★
     # ==========================================
-    # yfinanceでロードできず、ローカルキャッシュに一度もCSVファイルが作られなかった銘柄を
-    # 宇宙（universe.csv）から自動で永久排除し、不要な404エラーを根絶します。
+    # 外部の定義に一切依存せず、この内部だけで完結させて NameError を 100% 封殺します
     non_existent_tickers = []
     for t in tickers:
         price_path = prices_dir / f"{t}.csv"
@@ -480,15 +479,21 @@ def main():
             
     if non_existent_tickers:
         print(f"\n📢 [自己クリーニング] 価格データCSVが存在しない無効な {len(non_existent_tickers)} 銘柄を検知しました。")
-        print(f"上場廃止・ティッカー変更とみなして universe.csv から自動削除します: {non_existent_tickers}")
+        print(f"上場廃止・データ無効とみなして universe.csv から自動削除します: {non_existent_tickers}")
         
-        # 実際にデータがあるティッカーだけでuniverse.csvを上書き
-        df_uni_clean = df_uni[~df_uni["ticker"].map(normalize_ticker).isin([normalize_ticker(x) for x in non_existent_tickers])]
-        df_uni_clean.to_csv(UNIVERSE_CSV, index=False, encoding="utf-8-sig")
+        # 外部の normalize_ticker がなくても動作する、安全なインライン正規化処理
+        def clean_t(raw):
+            raw_s = str(raw).strip().upper()
+            if not raw_s: return raw_s
+            return raw_s if "." in raw_s or raw_s.isdigit() else f"{raw_s}.T"
+            
+        # 実際にデータがあるティッカーだけで universe.csv を上書き（ファイル名は直接指定で安全確保）
+        df_uni_clean = df_uni[~df_uni["ticker"].map(clean_t).isin([clean_t(x) for x in non_existent_tickers])]
+        df_uni_clean.to_csv("universe.csv", index=False, encoding="utf-8-sig")
         print("  ➔ universe.csv の自己クリーニング・浄化処理が正常完了しました。")
         
-        # メモリ上のtickersリストも最新化（この後の2〜6番目の処理から、除外されたゴミ銘柄を省きます）
-        tickers = [t for t in tickers if normalize_ticker(t) not in [normalize_ticker(x) for x in non_existent_tickers]]
+        # メモリ上の tickers リストも最新化（この後の2〜6番目の処理から、除外されたゴミ銘柄を省きます）
+        tickers = [t for t in tickers if clean_t(t) not in [clean_t(x) for x in non_existent_tickers]]
     # ==========================================
     
     # 2. 相対強度のベンチマークとして「市場平均（本日の中央値Close）」を動的算出
