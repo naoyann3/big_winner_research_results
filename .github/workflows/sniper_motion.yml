@@ -51,6 +51,8 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
+          # 👇 ★【この1行を追加】：暗号化されたWebhook URLをPythonにロードします
+          SPREADSHEET_WEBHOOK_URL: ${{ secrets.SPREADSHEET_WEBHOOK_URL }}
         run: |
           # pyyaml は設定ファイル（config.yaml）を読み込むために必要なので、ここでインストールします
           python -m pip install pyyaml
