@@ -467,6 +467,30 @@ def main():
     # 1. 本日分の株価データをマージアップデート
     update_prices_daily(tickers)
     
+    # ==========================================
+    # ★【Version 8.5.1 新規】：無効銘柄（上場廃止等）の自動永久追放（自己浄化） ★
+    # ==========================================
+    # yfinanceでロードできず、ローカルキャッシュに一度もCSVファイルが作られなかった銘柄を
+    # 宇宙（universe.csv）から自動で永久排除し、不要な404エラーを根絶します。
+    non_existent_tickers = []
+    for t in tickers:
+        price_path = prices_dir / f"{t}.csv"
+        if not price_path.exists():
+            non_existent_tickers.append(t)
+            
+    if non_existent_tickers:
+        print(f"\n📢 [自己クリーニング] 価格データCSVが存在しない無効な {len(non_existent_tickers)} 銘柄を検知しました。")
+        print(f"上場廃止・ティッカー変更とみなして universe.csv から自動削除します: {non_existent_tickers}")
+        
+        # 実際にデータがあるティッカーだけでuniverse.csvを上書き
+        df_uni_clean = df_uni[~df_uni["ticker"].map(normalize_ticker).isin([normalize_ticker(x) for x in non_existent_tickers])]
+        df_uni_clean.to_csv(UNIVERSE_CSV, index=False, encoding="utf-8-sig")
+        print("  ➔ universe.csv の自己クリーニング・浄化処理が正常完了しました。")
+        
+        # メモリ上のtickersリストも最新化（この後の2〜6番目の処理から、除外されたゴミ銘柄を省きます）
+        tickers = [t for t in tickers if normalize_ticker(t) not in [normalize_ticker(x) for x in non_existent_tickers]]
+    # ==========================================
+    
     # 2. 相対強度のベンチマークとして「市場平均（本日の中央値Close）」を動的算出
     print("Relative Strength用：市場中央値時系列を算出中...")
     all_closes = {}
